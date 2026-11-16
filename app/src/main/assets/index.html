@@ -555,6 +555,8 @@ function renderAddons(){
         <button class="btn sm f" data-up="${i}" ${i===0?"disabled":""}>▲</button><button class="btn sm f" data-down="${i}" ${i===addons.length-1?"disabled":""}>▼</button>
         <button class="btn sm danger f" data-del="${i}">Remove</button></div></div>`; }).join(""):`<p class="note">No addons yet.</p>`}
     ${sugg.length?`<div class="secth">Quick add</div>${sugg.map((s,i)=>`<div class="addon"><div class="lg">${esc(s.name[0])}</div><div class="bd"><div class="nm">${esc(s.name)}</div><div class="ds">${esc(s.desc)}</div></div><div class="ab">${s.setup?`<button class="btn sm primary f" data-setup="${i}">Set up</button>`:`<button class="btn sm primary f" data-sugg="${esc(s.url)}">Add</button>`}</div></div>`).join("")}`:""}
+    <div class="secth">Debrid service</div>
+    ${debridSectionHTML()}
     <div class="secth">Player</div>
     <div class="actions" style="margin-top:0"><button class="btn f ${settings.player!=="external"?"on":""}" data-pl="builtin">Built-in player</button>
       <button class="btn f ${settings.player==="external"?"on":""}" data-pl="external">External player (VLC, Just Player…)</button></div>
@@ -571,6 +573,7 @@ function renderAddons(){
   el.querySelectorAll("[data-down]").forEach(b=>b.onclick=()=>{ const i=+b.dataset.down; [addons[i+1],addons[i]]=[addons[i],addons[i+1]]; saveAddons(); rerender(`[data-down="${i+1}"]`); });
   el.querySelectorAll("[data-del]").forEach(b=>b.onclick=()=>{ const i=+b.dataset.del; confirmModal(`Remove ${addons[i].manifest.name}?`,"It can be added back any time.","Remove",()=>{ addons.splice(i,1); saveAddons(); rerender(); }); });
   el.querySelectorAll("[data-pl]").forEach(b=>b.onclick=()=>{ settings.player=b.dataset.pl; saveSettings(); rerender(`[data-pl="${b.dataset.pl}"]`); toast(settings.player==="external"?"Streams will open in your external player":"Using the built-in player"); });
+  wireDebridSection(rerender);
   $("#clrProg").onclick=()=>confirmModal("Clear watch history?","Continue watching will be emptied.","Clear",()=>{ progress={}; saveProg(); toast("Watch history cleared"); renderHomeLater(); });
 }
 let rhT=null; const renderHomeLater=()=>{ clearTimeout(rhT); rhT=setTimeout(()=>{ if(current!=="home") renderHome(); },50); };
@@ -597,7 +600,7 @@ function setupGuide(s){
   $("#modal").classList.add("on"); focusEl($("#mPaste"));
   $("#mNo").onclick=closeModal; $("#mPaste").onclick=()=>{ $("#modal").classList.remove("on"); focusEl($("#addUrl")); };
 }
-function closeModal(){ $("#modal").classList.remove("on"); if(modalReturn&&document.contains(modalReturn)) focusEl(modalReturn); }
+function closeModal(){ stopRdPoll(); $("#modal").classList.remove("on"); if(modalReturn&&document.contains(modalReturn)) focusEl(modalReturn); }
 
 /* ================= detail ================= */
 let curMeta=null, curSeason=null;
@@ -668,8 +671,8 @@ function openStreams(ctx,{auto}={}){
     $("#pf").innerHTML=names.length>1?[`<button class="btn sm f${filter==="all"?" on":""}" data-f="all">All ${panelResults.length}</button>`,...names.map(n=>`<button class="btn sm f${filter===n?" on":""}" data-f="${esc(n)}">${esc(n)}</button>`)].join(""):"";
     $("#pf").querySelectorAll("[data-f]").forEach(b=>b.onclick=()=>{ filter=b.dataset.f; draw(); focusEl($(`#pf [data-f="${CSS.escape(filter)}"]`)); });
     const list=panelResults.map((r,i)=>({r,i})).filter(x=>filter==="all"||x.r.addon===filter);
-    $("#pl").innerHTML=list.map(({r,i})=>{ const k=kind(r.s); const note=k==="torrent"?"Torrent — not playable here":k==="yt"?"YouTube":k==="ext"?"Opens externally":k==="none"?"Unsupported":"";
-      return `<button class="stream f${k==="torrent"||k==="none"?" na":""}" data-si="${i}"><div class="sn">${esc(r.s.name||r.addon)}</div><div class="st">${esc(r.s.title||r.s.description||"")}</div><div class="sa">${esc(r.addon)}${note?" · "+esc(note):""}</div></button>`; }).join("")
+    $("#pl").innerHTML=list.map(({r,i})=>{ const k=kind(r.s); const note=k==="torrent"?(debrid()?"⚡ via "+debridName():"Torrent — connect a debrid service to play"):k==="yt"?"YouTube":k==="ext"?"Opens externally":k==="none"?"Unsupported":"";
+      return `<button class="stream f${(k==="torrent"&&!debrid())||k==="none"?" na":""}" data-si="${i}"><div class="sn">${esc(r.s.name||r.addon)}</div><div class="st">${esc(r.s.title||r.s.description||"")}</div><div class="sa">${esc(r.addon)}${note?" · "+esc(note):""}</div></button>`; }).join("")
       +(done<provs.length?`<div class="loader"><div class="spin"></div>Waiting on ${provs.length-done} addon${provs.length-done===1?"":"s"}…</div>`:"")
       +(done===provs.length&&!panelResults.length?`<div class="empty" style="padding:3rem 0"><h2>No streams found</h2><p>Your addons didn't return anything for this title.</p></div>`:"");
     $("#pl").querySelectorAll("[data-si]").forEach(b=>b.onclick=()=>pickStream(panelResults[+b.dataset.si]));
@@ -687,9 +690,209 @@ function pickStream(r){
   if(k==="url"){ $("#panel").classList.remove("on"); playStream(s,panelCtx); return; }
   if(k==="yt") return openLink(`https://www.youtube.com/watch?v=${encodeURIComponent(s.ytId)}`);
   if(k==="ext") return openLink(s.externalUrl);
-  toast(k==="torrent"?"Torrent streams need a debrid/HTTP stream addon to play here":"This stream type isn't supported",true);
+  if(k==="torrent"){
+    if(!debrid()){ toast("Connect TorBox, Real-Debrid or Premiumize under Addons to play torrent streams",true); return; }
+    return playTorrent(r);
+  }
+  toast("This stream type isn't supported",true);
+}
+const resolvedCache=new Map();
+let resolving=false;
+async function playTorrent(r){
+  if(resolving) return; resolving=true;
+  const s=r.s, btn=document.activeElement, sa=btn&&btn.querySelector(".sa"), orig=sa&&sa.textContent;
+  const ck=s.infoHash+":"+(s.fileIdx??"")+":"+(debrid().provider);
+  try{
+    let url=resolvedCache.get(ck);
+    if(!url){ url=await resolveTorrent(s, m=>{ if(sa) sa.textContent=m; }); resolvedCache.set(ck,url); }
+    if(sa) sa.textContent=orig;
+    $("#panel").classList.remove("on"); playStream({...s,url},panelCtx);
+  }catch(e){ if(sa) sa.textContent=orig; toast(e.message,true); }
+  finally{ resolving=false; }
 }
 function openLink(u){ if(NATIVE&&window.Android.openUrl) window.Android.openUrl(u); else location.href=u; }
+
+/* ================= debrid services ================= */
+const DEBRIDS = {
+  torbox:     {name:"TorBox",      keyPage:"torbox.app/settings",           keyHint:"Settings → API Key"},
+  realdebrid: {name:"Real-Debrid", keyPage:"real-debrid.com/apitoken",      keyHint:"your API token", device:true},
+  premiumize: {name:"Premiumize",  keyPage:"premiumize.me/account",         keyHint:"Account → API Key"}
+};
+const RD_OPEN_CLIENT="X35INKNOGQLPJ"; // Real-Debrid's public client id for open-source apps
+const debrid = ()=> settings.debrid && settings.debrid.provider ? settings.debrid : null;
+const debridName = ()=> debrid() ? DEBRIDS[debrid().provider].name : "";
+const sleep = ms=>new Promise(r=>setTimeout(r,ms));
+async function dfetch(url, opt={}, timeout=20000){
+  const c=new AbortController(); const h=setTimeout(()=>c.abort(),timeout);
+  try{ const r=await fetch(url,{...opt,signal:c.signal}); let j=null; try{ j=await r.json(); }catch(e){}
+    if(!r.ok){ const m=j&&(j.detail||j.error||j.message)||("HTTP "+r.status); const e=new Error(m); e.status=r.status; throw e; } return j;
+  } finally{ clearTimeout(h); }
+}
+const form = o=>{ const f=new URLSearchParams(); Object.entries(o).forEach(([k,v])=>f.append(k,v)); return f; };
+const VIDEO_RE=/\.(mkv|mp4|m4v|avi|mov|webm|ts|m2ts|wmv|mpg|mpeg)$/i;
+function pickFile(files, s){
+  // files: [{id, name, size}]
+  const want=s.behaviorHints&&s.behaviorHints.filename;
+  if(want){ const f=files.find(f=>(f.name||"").split("/").pop()===want); if(f) return f; }
+  const vids=files.filter(f=>VIDEO_RE.test(f.name||""));
+  const pool=vids.length?vids:files;
+  if(Number.isInteger(s.fileIdx) && s.fileIdx>=0 && s.fileIdx<files.length && VIDEO_RE.test(files[s.fileIdx].name||"")) return files[s.fileIdx];
+  return pool.slice().sort((a,b)=>(b.size||0)-(a.size||0))[0];
+}
+
+/* --- Real-Debrid token handling --- */
+async function rdToken(){
+  const d=debrid(); if(!d) throw new Error("not connected");
+  if(!d.rd) return d.key; // plain API token
+  if(d.rd.expires && Date.now() < d.rd.expires-60000) return d.rd.token;
+  const j=await dfetch("https://api.real-debrid.com/oauth/v2/token",{method:"POST",body:form({client_id:d.rd.client_id,client_secret:d.rd.client_secret,code:d.rd.refresh,grant_type:"http://oauth.net/grant_type/device/1.0"})});
+  d.rd.token=j.access_token; d.rd.refresh=j.refresh_token||d.rd.refresh; d.rd.expires=Date.now()+(j.expires_in||3600)*1000; saveSettings();
+  return d.rd.token;
+}
+const rdApi = async (path,opt={})=>{ const t=await rdToken(); return dfetch("https://api.real-debrid.com/rest/1.0"+path,{...opt,headers:{Authorization:"Bearer "+t}}); };
+
+/* --- account check (returns {user, expires}) --- */
+async function debridAccount(provider, key){
+  if(provider==="torbox"){
+    const j=await dfetch("https://api.torbox.app/v1/api/user/me?settings=false",{headers:{Authorization:"Bearer "+key}});
+    const u=j.data||{}; return {user:u.email||"TorBox user", expires:u.premium_expires_at||null, plan:u.plan};
+  }
+  if(provider==="realdebrid"){
+    const j=await rdApi("/user"); return {user:j.username||j.email, expires:j.expiration||null, plan:j.type};
+  }
+  if(provider==="premiumize"){
+    const j=await dfetch("https://www.premiumize.me/api/account/info?apikey="+encodeURIComponent(key));
+    if(j.status!=="success") throw new Error(j.message||"Invalid API key");
+    return {user:"Customer "+j.customer_id, expires:j.premium_until?new Date(j.premium_until*1000).toISOString():null};
+  }
+}
+
+/* --- turn a torrent stream into a playable link --- */
+async function resolveTorrent(s, onStatus){
+  const d=debrid(); if(!d) throw new Error("Connect a debrid service in Addons first");
+  const hash=String(s.infoHash).toLowerCase();
+  const magnet=`magnet:?xt=urn:btih:${hash}`+(s.title?`&dn=${encodeURIComponent(String(s.title).split("\n")[0])}`:"")+((s.sources||[]).filter(x=>/^tracker:/.test(x)).slice(0,10).map(x=>"&tr="+encodeURIComponent(x.slice(8))).join(""));
+
+  if(d.provider==="torbox"){
+    const H={Authorization:"Bearer "+d.key};
+    onStatus&&onStatus("Asking TorBox…");
+    let id=null;
+    try{ const j=await dfetch("https://api.torbox.app/v1/api/torrents/createtorrent",{method:"POST",headers:H,body:form({magnet, seed:"3", allow_zip:"false"})});
+      id=j.data&&(j.data.torrent_id||j.data.id); }catch(e){ if(e.status===401||e.status===403) throw new Error("TorBox rejected your API key"); }
+    for(let i=0;i<40;i++){
+      const j=await dfetch("https://api.torbox.app/v1/api/torrents/mylist?bypass_cache=true"+(id?"&id="+id:""),{headers:H});
+      let t=j.data; if(Array.isArray(t)) t=t.find(x=>String(x.hash).toLowerCase()===hash);
+      if(t){ id=t.id;
+        if(t.download_present||t.download_finished){
+          const files=(t.files||[]).map(f=>({id:f.id,name:f.short_name||f.name,size:f.size}));
+          const f=pickFile(files,s); if(!f) throw new Error("No playable file in this torrent");
+          return `https://api.torbox.app/v1/api/torrents/requestdl?token=${encodeURIComponent(d.key)}&torrent_id=${t.id}&file_id=${f.id}&redirect=true`;
+        }
+        onStatus&&onStatus(`TorBox is caching it… ${Math.round((t.progress||0)*100)}%`);
+        if(i>=6 && !(t.progress>0)) throw new Error("Not cached on TorBox yet — it's downloading in your TorBox account. Try again later or pick a ⚡ cached stream.");
+      }
+      await sleep(3000);
+    }
+    throw new Error("TorBox is still downloading this one. Try again in a few minutes.");
+  }
+
+  if(d.provider==="realdebrid"){
+    onStatus&&onStatus("Asking Real-Debrid…");
+    const add=await rdApi("/torrents/addMagnet",{method:"POST",body:form({magnet})});
+    let info=await rdApi("/torrents/info/"+add.id);
+    if(info.status==="waiting_files_selection"||info.status==="magnet_conversion"){
+      for(let i=0;i<10&&info.status==="magnet_conversion";i++){ await sleep(1500); info=await rdApi("/torrents/info/"+add.id); }
+      const files=(info.files||[]).map(f=>({id:f.id,name:f.path,size:f.bytes}));
+      const f=pickFile(files,s); if(!f) throw new Error("No playable file in this torrent");
+      await rdApi("/torrents/selectFiles/"+add.id,{method:"POST",body:form({files:String(f.id)})});
+    }
+    for(let i=0;i<8;i++){
+      info=await rdApi("/torrents/info/"+add.id);
+      if(info.status==="downloaded" && info.links&&info.links.length){
+        const u=await rdApi("/unrestrict/link",{method:"POST",body:form({link:info.links[0]})});
+        return u.download;
+      }
+      if(["error","magnet_error","virus","dead"].includes(info.status)) throw new Error("Real-Debrid couldn't get this torrent ("+info.status+")");
+      onStatus&&onStatus(`Real-Debrid: ${info.status.replace(/_/g," ")} ${info.progress?Math.round(info.progress)+"%":""}`);
+      await sleep(2500);
+    }
+    throw new Error("Not cached on Real-Debrid — it's downloading in your account. Try again later.");
+  }
+
+  if(d.provider==="premiumize"){
+    onStatus&&onStatus("Asking Premiumize…");
+    const j=await dfetch("https://www.premiumize.me/api/transfer/directdl",{method:"POST",body:form({apikey:d.key,src:magnet})});
+    if(j.status!=="success"||!(j.content||[]).length) throw new Error("Not cached on Premiumize. Pick another stream.");
+    const files=j.content.map((c,i)=>({id:i,name:c.path,size:c.size,link:c.stream_link||c.link}));
+    const f=pickFile(files,s); return f.link;
+  }
+  throw new Error("Unknown debrid service");
+}
+
+/* --- connect screens --- */
+let rdPoll=null;
+function stopRdPoll(){ if(rdPoll){ rdPoll.stop=true; rdPoll=null; } }
+function connectDebrid(provider){
+  stopRdPoll(); modalReturn=document.activeElement;
+  const P=DEBRIDS[provider];
+  $("#modalBox").innerHTML=`<h2>Connect ${esc(P.name)}</h2>
+    ${P.device?`<div id="rdBox" class="note" style="font-size:1.4rem;margin:1rem 0 2rem"><div class="loader"><div class="spin"></div>Getting a code…</div></div><p style="margin-bottom:.8rem">Or paste an API token instead:</p>`:
+      `<ol style="font-size:1.35rem;line-height:1.7;color:var(--muted);padding-left:2.2rem;margin:1rem 0 1.6rem">
+        <li>On your phone, open <b style="color:var(--toxic);font-size:1.5rem">${esc(P.keyPage)}</b> and copy ${esc(P.keyHint)}.</li>
+        <li>Paste it below (the Google TV app on your phone can paste for you), then choose Connect.</li></ol>`}
+    <form class="field" id="dkForm" style="margin-bottom:0"><input class="f" id="dkInput" type="password" placeholder="${esc(P.name)} API key" autocomplete="off"><button class="btn primary f" type="submit">Connect</button></form>
+    <p id="dkMsg" style="min-height:2rem;margin-top:1rem"></p>
+    <div class="actions" style="margin-top:.6rem"><button class="btn f" id="mNo">Cancel</button></div>`;
+  $("#modal").classList.add("on"); focusEl(P.device?$("#mNo"):$("#dkInput"));
+  $("#mNo").onclick=()=>{ stopRdPoll(); closeModal(); };
+  $("#dkForm").onsubmit=async e=>{ e.preventDefault(); const key=$("#dkInput").value.trim(); if(!key) return;
+    await finishConnect({provider,key}); };
+  if(P.device) startRdDevice();
+}
+async function finishConnect(cfg){
+  const msg=$("#dkMsg"); if(msg){ msg.style.color="var(--muted)"; msg.textContent="Checking…"; }
+  const prev=settings.debrid; settings.debrid=cfg;
+  try{ const acct=await debridAccount(cfg.provider,cfg.key); cfg.account=acct; saveSettings(); stopRdPoll(); closeModal();
+    toast(`${DEBRIDS[cfg.provider].name} connected — ${acct.user}`); renderAddons(); focusEl($("#dbManage")||$("#addUrl")); return true;
+  }catch(e){ settings.debrid=prev; saveSettings(); if(msg){ msg.style.color="#ff8b8f"; msg.textContent="That didn't work: "+e.message; } return false; }
+}
+async function startRdDevice(){
+  const poll={stop:false}; rdPoll=poll; const box=$("#rdBox");
+  try{
+    const c=await dfetch(`https://api.real-debrid.com/oauth/v2/device/code?client_id=${RD_OPEN_CLIENT}&new_credentials=yes`);
+    if(poll.stop) return;
+    box.innerHTML=`On your phone, go to <b style="color:var(--toxic);font-size:1.6rem">${esc((c.verification_url||"real-debrid.com/device").replace(/^https?:\/\//,""))}</b> and enter:
+      <div class="bungee" style="font-family:Bungee,Impact,sans-serif;font-size:4.4rem;letter-spacing:.2em;color:#fff;text-shadow:0 0 1.4rem var(--glow);margin:1rem 0">${esc(c.user_code)}</div>
+      <div class="loader"><div class="spin"></div>Waiting for you to approve…</div>`;
+    const end=Date.now()+(c.expires_in||600)*1000;
+    while(!poll.stop && Date.now()<end){
+      await sleep((c.interval||5)*1000); if(poll.stop) return;
+      let cred=null; try{ cred=await dfetch(`https://api.real-debrid.com/oauth/v2/device/credentials?client_id=${RD_OPEN_CLIENT}&code=${encodeURIComponent(c.device_code)}`); }catch(e){}
+      if(cred&&cred.client_secret){
+        const t=await dfetch("https://api.real-debrid.com/oauth/v2/token",{method:"POST",body:form({client_id:cred.client_id,client_secret:cred.client_secret,code:c.device_code,grant_type:"http://oauth.net/grant_type/device/1.0"})});
+        await finishConnect({provider:"realdebrid",key:"",rd:{client_id:cred.client_id,client_secret:cred.client_secret,token:t.access_token,refresh:t.refresh_token,expires:Date.now()+(t.expires_in||3600)*1000}});
+        return;
+      }
+    }
+    if(!poll.stop) box.innerHTML=`<span style="color:#ff8b8f">The code expired.</span> Close this and try again.`;
+  }catch(e){ if(!poll.stop) box.innerHTML=`<span style="color:#ff8b8f">Couldn't reach Real-Debrid (${esc(e.message)}).</span> You can paste an API token below instead.`; }
+}
+function debridSectionHTML(){
+  const d=debrid();
+  if(d){ const a=d.account||{}; const exp=a.expires?new Date(a.expires):null;
+    return `<div class="addon"><div class="lg" style="color:var(--toxic)">⚡</div><div class="bd"><div class="nm">${esc(DEBRIDS[d.provider].name)}<small>connected</small></div>
+      <div class="ds">${esc(a.user||"")}${exp&&!isNaN(exp)?` · premium until ${esc(exp.toLocaleDateString())}`:""}${a.plan!=null?` · plan ${esc(a.plan)}`:""}</div>
+      <div class="chips"><span class="chip g">torrent streams play through ${esc(DEBRIDS[d.provider].name)}</span></div></div>
+      <div class="ab"><button class="btn sm f" id="dbManage">Check</button><button class="btn sm danger f" id="dbOff">Disconnect</button></div></div>`;
+  }
+  return `<p class="note" style="margin-bottom:1.2rem">Connect your own debrid account so torrent results from your addons play instantly.</p>
+    <div class="actions" style="margin-top:0">${Object.entries(DEBRIDS).map(([k,v])=>`<button class="btn f" data-dconnect="${k}">Connect ${esc(v.name)}</button>`).join("")}</div>`;
+}
+function wireDebridSection(rerender){
+  document.querySelectorAll("[data-dconnect]").forEach(b=>b.onclick=()=>connectDebrid(b.dataset.dconnect));
+  const m=$("#dbManage"); if(m) m.onclick=async()=>{ try{ const d=debrid(); d.account=await debridAccount(d.provider,d.key); saveSettings(); toast(`${debridName()} OK — ${d.account.user}`); rerender("#dbManage"); }catch(e){ toast(`${debridName()} problem: ${e.message}`,true); } };
+  const o=$("#dbOff"); if(o) o.onclick=()=>confirmModal(`Disconnect ${debridName()}?`,"Torrent streams will stop playing until you connect again.","Disconnect",()=>{ settings.debrid=null; saveSettings(); rerender(); });
+}
 
 /* ================= player ================= */
 const video=$("#video"); let hls=null, pctx=null, osdHidden=false, osdT=null, lastSave=0, subsList=[], subIdx=-1;
