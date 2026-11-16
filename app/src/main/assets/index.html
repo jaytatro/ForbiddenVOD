@@ -269,6 +269,7 @@ let settings = LS.get("settings", {player:"builtin"});
 const saveAddons=()=>LS.set("addons",addons), saveLib=()=>LS.set("library",library), saveProg=()=>LS.set("progress",progress), saveSettings=()=>LS.set("settings",settings);
 const NATIVE = !!(window.Android && window.Android.openExternal);
 const SUGGESTED = [
+  {name:"AIOStreams", desc:"All your stream sources in one list, works with TorBox. Set it up on your phone, then paste your link here.", setup:"https://aiostreams.elfhosted.com/stremio/configure", match:/aiostreams/i},
   {name:"Cinemeta", desc:"Official Stremio metadata — popular movies & series, plus search.", url:"https://v3-cinemeta.strem.io/manifest.json"},
   {name:"OpenSubtitles v3", desc:"Official subtitles addon.", url:"https://opensubtitles-v3.strem.io/manifest.json"}
 ];
@@ -541,7 +542,7 @@ function renderLibrary(){
 
 /* ================= addons ================= */
 function renderAddons(){
-  const el=$("#addBody"); const sugg=SUGGESTED.filter(s=>!addons.some(a=>a.url===s.url));
+  const el=$("#addBody"); const sugg=SUGGESTED.filter(s=>!addons.some(a=>s.match?s.match.test(a.url)||s.match.test(a.manifest.name||""):a.url===s.url));
   el.innerHTML=`<div class="vpad">
     <h1 class="vt">Addons</h1><p class="vs">Enter a Stremio-compatible addon link (<b>…/manifest.json</b> or <b>stremio://</b>). Tip: use the Google TV app on your phone to paste links into the TV keyboard.</p>
     <form class="field" id="addForm"><input class="f" id="addUrl" type="url" placeholder="https://…/manifest.json" autocomplete="off" inputmode="url"><button class="btn primary f" type="submit">Install</button></form>
@@ -553,7 +554,7 @@ function renderAddons(){
         <div class="ab"><button class="btn sm f ${a.enabled!==false?"on":""}" data-tog="${i}">${a.enabled!==false?"On":"Off"}</button>
         <button class="btn sm f" data-up="${i}" ${i===0?"disabled":""}>▲</button><button class="btn sm f" data-down="${i}" ${i===addons.length-1?"disabled":""}>▼</button>
         <button class="btn sm danger f" data-del="${i}">Remove</button></div></div>`; }).join(""):`<p class="note">No addons yet.</p>`}
-    ${sugg.length?`<div class="secth">Quick add</div>${sugg.map(s=>`<div class="addon"><div class="lg">${esc(s.name[0])}</div><div class="bd"><div class="nm">${esc(s.name)}</div><div class="ds">${esc(s.desc)}</div></div><div class="ab"><button class="btn sm primary f" data-sugg="${esc(s.url)}">Add</button></div></div>`).join("")}`:""}
+    ${sugg.length?`<div class="secth">Quick add</div>${sugg.map((s,i)=>`<div class="addon"><div class="lg">${esc(s.name[0])}</div><div class="bd"><div class="nm">${esc(s.name)}</div><div class="ds">${esc(s.desc)}</div></div><div class="ab">${s.setup?`<button class="btn sm primary f" data-setup="${i}">Set up</button>`:`<button class="btn sm primary f" data-sugg="${esc(s.url)}">Add</button>`}</div></div>`).join("")}`:""}
     <div class="secth">Player</div>
     <div class="actions" style="margin-top:0"><button class="btn f ${settings.player!=="external"?"on":""}" data-pl="builtin">Built-in player</button>
       <button class="btn f ${settings.player==="external"?"on":""}" data-pl="external">External player (VLC, Just Player…)</button></div>
@@ -563,6 +564,7 @@ function renderAddons(){
     <div class="tag" style="font-size:1.8rem;margin-top:3rem;text-shadow:0 0 1rem var(--glow)">plug in the revolution</div></div>`;
   const rerender=(focusSel)=>{ renderAddons(); renderHomeLater(); const f=focusSel&&$(focusSel); focusEl(f||$("#addUrl")); };
   $("#addForm").onsubmit=async e=>{ e.preventDefault(); const links=$("#addUrl").value.split(/\s+/).filter(Boolean); let ok=0; for(const l of links) if(await installAddon(l)) ok++; if(ok) rerender(); };
+  el.querySelectorAll("[data-setup]").forEach(b=>b.onclick=()=>setupGuide(sugg[+b.dataset.setup]));
   el.querySelectorAll("[data-sugg]").forEach(b=>b.onclick=async()=>{ if(await installAddon(b.dataset.sugg)) rerender(); });
   el.querySelectorAll("[data-tog]").forEach(b=>b.onclick=()=>{ const i=+b.dataset.tog, a=addons[i]; a.enabled=a.enabled===false; saveAddons(); rerender(`[data-tog="${i}"]`); });
   el.querySelectorAll("[data-up]").forEach(b=>b.onclick=()=>{ const i=+b.dataset.up; [addons[i-1],addons[i]]=[addons[i],addons[i-1]]; saveAddons(); rerender(`[data-up="${i-1}"]`); });
@@ -580,6 +582,20 @@ function confirmModal(title,body,ok,fn){
   $("#modalBox").innerHTML=`<h2>${esc(title)}</h2><p>${esc(body)}</p><div class="actions"><button class="btn f" id="mNo">Cancel</button><button class="btn danger f" id="mOk">${esc(ok)}</button></div>`;
   $("#modal").classList.add("on"); focusEl($("#mNo"));
   $("#mNo").onclick=closeModal; $("#mOk").onclick=()=>{ closeModal(); fn(); };
+}
+function setupGuide(s){
+  modalReturn=document.activeElement;
+  $("#modalBox").innerHTML=`<h2>Set up ${esc(s.name)}</h2>
+    <ol style="font-size:1.35rem;line-height:1.7;color:var(--muted);padding-left:2.2rem;margin:1rem 0">
+      <li>On your phone or computer, open<br><b style="color:var(--toxic);font-size:1.5rem;word-break:break-all">${esc(s.setup.replace(/^https:\/\//,""))}</b></li>
+      <li>Choose <b style="color:var(--text)">Start setup</b>. Under <b style="color:var(--text)">Services</b>, add <b style="color:var(--text)">TorBox</b> and paste your TorBox API key.</li>
+      <li>On <b style="color:var(--text)">Save &amp; Install</b>, set a password, choose <b style="color:var(--text)">Create</b>, then <b style="color:var(--text)">Copy install link</b>.</li>
+      <li>Paste that link into the box on this screen and press <b style="color:var(--text)">Install</b>. The Google TV app on your phone can paste it for you.</li>
+    </ol>
+    <p>Your link contains your TorBox key, so keep it private.</p>
+    <div class="actions"><button class="btn primary f" id="mPaste">Paste my link now</button><button class="btn f" id="mNo">Close</button></div>`;
+  $("#modal").classList.add("on"); focusEl($("#mPaste"));
+  $("#mNo").onclick=closeModal; $("#mPaste").onclick=()=>{ $("#modal").classList.remove("on"); focusEl($("#addUrl")); };
 }
 function closeModal(){ $("#modal").classList.remove("on"); if(modalReturn&&document.contains(modalReturn)) focusEl(modalReturn); }
 
