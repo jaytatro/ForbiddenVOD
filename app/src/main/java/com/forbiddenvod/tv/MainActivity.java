@@ -257,6 +257,24 @@ public class MainActivity extends Activity {
         }
 
         @JavascriptInterface
+        @SuppressWarnings("deprecation")
+        public int appBuild() {
+            try {
+                return getPackageManager().getPackageInfo(getPackageName(), 0).versionCode;
+            } catch (Exception e) {
+                return 0;
+            }
+        }
+
+        @JavascriptInterface
+        public String deviceName() {
+            String m = Build.MODEL == null ? "" : Build.MODEL;
+            String b = Build.MANUFACTURER == null ? "" : Build.MANUFACTURER;
+            if (!b.isEmpty() && !m.toLowerCase().startsWith(b.toLowerCase())) m = b + " " + m;
+            return m.isEmpty() ? "Android TV" : m;
+        }
+
+        @JavascriptInterface
         public String version() {
             return "1.0 (" + Build.MODEL + ")";
         }

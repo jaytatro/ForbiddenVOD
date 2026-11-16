@@ -68,6 +68,12 @@ share widely, create your own key: **Build → Generate Signed App Bundle / APK*
 - Torrent-only streams (no direct link) won't play; use addons that provide HTTP links.
 - Watch history, library and addons are stored on the TV itself.
 
+## Control panel (sell to customers)
+
+Activation codes, expiry dates, TV limits, plan addons and TV messages — managed from your phone.
+Panel: https://jaytatro.github.io/ForbiddenVOD/panel/ · setup guide: [panel/README.md](panel/README.md).
+Until the panel is connected to a Supabase project, the app runs without activation.
+
 ## Phone version
 
 `docs/phone-web-app.html` is a single-file phone version of the same app. Host it anywhere (GitHub Pages, Netlify) and use "Add to Home screen".

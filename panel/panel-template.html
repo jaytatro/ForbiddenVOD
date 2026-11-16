@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0a1311">
+<meta name="robots" content="noindex">
+<title>Forbidden VOD · Control Panel</title>
+<link rel="icon" href="data:image/jpeg;base64,{{ICON}}">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bungee&family=Special+Elite&family=Rubik:wght@400;500;700&display=swap">
+<style>
+:root{--bg:#0a1311;--bg2:#101d1a;--panel:#14241f;--panel2:#1b2f29;--line:#24403a;--toxic:#7dff3c;--toxic2:#4fd11a;--glow:rgba(125,255,60,.3);
+  --red:#e3262e;--fire:#ff7a1a;--ember:#ffb347;--text:#eef5f1;--muted:#8fa79e;--dim:#5c7369;--safe-b:env(safe-area-inset-bottom,0px);--safe-t:env(safe-area-inset-top,0px)}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;background:var(--bg);color:var(--text);font-family:Rubik,system-ui,sans-serif;font-size:15px}
+body{background:radial-gradient(900px 400px at 110% -10%,rgba(255,122,26,.13),transparent 60%),radial-gradient(700px 400px at -20% 0%,rgba(125,255,60,.07),transparent 60%),var(--bg);background-attachment:fixed;min-height:100vh}
+button,input,select,textarea{font:inherit;color:inherit}
+.hide{display:none!important}
+header{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:10px;padding:calc(10px + var(--safe-t)) 14px 10px;background:rgba(10,19,17,.94);backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
+header img{height:36px;border-radius:7px;box-shadow:0 0 14px var(--glow)}
+header .t1{font-family:Bungee,Impact,sans-serif;color:var(--toxic);font-size:15px;line-height:1}
+header .t2{font-size:11px;color:var(--muted);letter-spacing:.08em;text-transform:uppercase;margin-top:2px}
+header .sp{flex:1}
+nav.tabs{display:flex;gap:6px;padding:10px 14px 0;overflow-x:auto;scrollbar-width:none;max-width:1100px;margin:0 auto}
+nav.tabs button{flex:0 0 auto;background:var(--panel);border:1px solid var(--line);border-radius:99px;padding:8px 14px;cursor:pointer;font-weight:500;color:var(--muted)}
+nav.tabs button.on{background:var(--toxic);border-color:var(--toxic);color:#071006;font-weight:700}
+main{max-width:1100px;margin:0 auto;padding:14px 14px calc(40px + var(--safe-b))}
+h2{font-family:Bungee,Impact,sans-serif;font-weight:400;font-size:20px;margin:6px 0 12px}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;border:1px solid var(--line);background:var(--panel2);border-radius:11px;padding:10px 14px;font-weight:700;cursor:pointer;font-size:14px;white-space:nowrap}
+.btn.primary{background:var(--toxic);border-color:var(--toxic);color:#071006;box-shadow:0 0 16px var(--glow)}
+.btn.danger{background:rgba(227,38,46,.12);border-color:rgba(227,38,46,.45);color:#ff7b80}
+.btn.sm{padding:6px 10px;font-size:12.5px;border-radius:9px}
+.btn:disabled{opacity:.5;pointer-events:none}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:14px}
+.stat{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px 14px}
+.stat b{display:block;font-size:24px;font-family:Bungee,Impact,sans-serif;font-weight:400}
+.stat span{font-size:12px;color:var(--muted)}
+.stat.g b{color:var(--toxic)}.stat.o b{color:var(--ember)}.stat.r b{color:#ff6b70}
+.search{display:flex;gap:8px;margin-bottom:10px}
+input.in,select.in,textarea.in{width:100%;background:var(--bg);border:1px solid var(--line);border-radius:11px;padding:10px 12px;outline:none;font-size:15px}
+input.in:focus,select.in:focus,textarea.in:focus{border-color:var(--toxic);box-shadow:0 0 0 3px rgba(125,255,60,.12)}
+textarea.in{min-height:110px;font-family:ui-monospace,monospace;font-size:12.5px}
+label.l{display:block;font-size:12px;color:var(--muted);margin:12px 0 5px;text-transform:uppercase;letter-spacing:.06em}
+.chips{display:flex;gap:6px;overflow-x:auto;scrollbar-width:none;margin-bottom:12px}
+.chips button{flex:0 0 auto;background:none;border:1px solid var(--line);border-radius:99px;padding:6px 11px;font-size:12.5px;color:var(--muted);cursor:pointer}
+.chips button.on{border-color:var(--toxic);color:var(--toxic)}
+.list{display:grid;gap:8px}
+@media(min-width:760px){.list.cards{grid-template-columns:1fr 1fr}}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px 14px;cursor:pointer;text-align:left;width:100%}
+.card:hover{border-color:var(--toxic2)}
+.card .top{display:flex;align-items:center;gap:8px}
+.card .nm{font-weight:700;font-size:15.5px;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.card .code{font-family:ui-monospace,monospace;font-size:13px;color:var(--toxic);letter-spacing:.04em}
+.card .meta{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:12.5px;color:var(--muted);margin-top:6px}
+.pill{font-size:11px;font-weight:700;padding:3px 8px;border-radius:99px;text-transform:uppercase;letter-spacing:.05em;border:1px solid}
+.pill.active{color:var(--toxic);border-color:rgba(125,255,60,.4);background:rgba(125,255,60,.07)}
+.pill.soon{color:var(--ember);border-color:rgba(255,122,26,.45);background:rgba(255,122,26,.08)}
+.pill.expired,.pill.disabled{color:#ff6b70;border-color:rgba(227,38,46,.45);background:rgba(227,38,46,.08)}
+.empty{text-align:center;color:var(--muted);padding:40px 10px}
+.empty b{display:block;font-family:Bungee,Impact,sans-serif;font-weight:400;color:var(--text);font-size:17px;margin-bottom:6px}
+/* sheet */
+.sheet-bg{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:50;display:none;align-items:flex-end;justify-content:center}
+.sheet-bg.on{display:flex}
+@media(min-width:760px){.sheet-bg{align-items:center}}
+.sheet{background:var(--bg2);border:1px solid var(--line);border-radius:20px 20px 0 0;width:100%;max-width:620px;max-height:92vh;overflow-y:auto;padding:8px 16px calc(18px + var(--safe-b))}
+@media(min-width:760px){.sheet{border-radius:20px}}
+.sheet .grab{width:42px;height:5px;border-radius:9px;background:var(--line);margin:4px auto 8px}
+.sheet h3{font-family:Bungee,Impact,sans-serif;font-weight:400;font-size:18px;margin:4px 0 2px}
+.sheet .acts{display:flex;gap:8px;flex-wrap:wrap;margin-top:16px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:0 10px}
+.bigcode{font-family:Bungee,Impact,sans-serif;font-size:30px;letter-spacing:.06em;color:var(--toxic);text-shadow:0 0 14px var(--glow);text-align:center;margin:14px 0;word-break:break-all}
+.dev{display:flex;align-items:center;gap:10px;padding:10px 0;border-top:1px solid var(--line)}
+.dev .d{flex:1;min-width:0;font-size:13px}.dev .d b{display:block;font-size:14px}
+.dev .d span{color:var(--muted)}
+.addonrow{display:flex;gap:8px;align-items:center;font-size:13px;padding:6px 0;border-top:1px solid var(--line)}
+.addonrow .u{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted);font-family:ui-monospace,monospace;font-size:11.5px}
+.note{font-size:12.5px;color:var(--muted);line-height:1.5}
+.ok{color:var(--toxic)}.bad{color:#ff6b70}
+/* login */
+.login{max-width:380px;margin:8vh auto 0;padding:0 18px;text-align:center}
+.login img{width:220px;border-radius:18px;box-shadow:0 0 30px var(--glow)}
+.login h1{font-family:Bungee,Impact,sans-serif;font-weight:400;font-size:24px;margin:16px 0 2px;color:var(--toxic);text-shadow:0 0 12px var(--glow)}
+.login .tag{font-family:"Special Elite",monospace;color:var(--text);margin-bottom:20px}
+.login form{text-align:left}
+#toast{position:fixed;left:50%;bottom:calc(20px + var(--safe-b));transform:translateX(-50%) translateY(20px);background:var(--panel2);border:1px solid var(--toxic2);padding:10px 16px;border-radius:12px;font-size:13.5px;z-index:99;opacity:0;transition:.2s;pointer-events:none;max-width:92vw;box-shadow:0 0 18px var(--glow)}
+#toast.on{opacity:1;transform:translateX(-50%)}
+#toast.err{border-color:var(--red);box-shadow:0 0 18px rgba(227,38,46,.35)}
+.spin{display:inline-block;width:16px;height:16px;border-radius:50%;border:2px solid var(--line);border-top-color:var(--toxic);animation:sp .8s linear infinite;vertical-align:-3px}
+@keyframes sp{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+
+<!-- ===== connect / login ===== -->
+<section id="vLogin" class="login hide">
+  <img src="data:image/jpeg;base64,{{LOGO}}" alt="Forbidden Streams TV">
+  <h1>CONTROL PANEL</h1>
+  <div class="tag">plug in the revolution</div>
+  <form id="setupForm" class="hide">
+    <p class="note">First time here: connect your Supabase project. Find both values in Supabase → <b>Project Settings → API</b>.</p>
+    <label class="l">Project URL</label><input class="in" id="sUrl" placeholder="https://xxxx.supabase.co" autocomplete="off">
+    <label class="l">anon public key</label><input class="in" id="sKey" placeholder="eyJhbGciOi…" autocomplete="off">
+    <div class="acts" style="margin-top:16px"><button class="btn primary" style="width:100%">Save</button></div>
+  </form>
+  <form id="loginForm" class="hide">
+    <label class="l">Email</label><input class="in" id="lEmail" type="email" autocomplete="username">
+    <label class="l">Password</label><input class="in" id="lPass" type="password" autocomplete="current-password">
+    <div style="margin-top:16px"><button class="btn primary" style="width:100%" id="lBtn">Sign in</button></div>
+    <p class="note" id="lMsg" style="min-height:20px;margin-top:10px"></p>
+    <p class="note"><a href="#" id="resetConn" style="color:var(--dim)">Change Supabase project</a></p>
+  </form>
+</section>
+
+<!-- ===== app ===== -->
+<div id="vApp" class="hide">
+  <header>
+    <img src="data:image/jpeg;base64,{{BANNER}}" alt="">
+    <div><div class="t1">FORBIDDEN VOD</div><div class="t2">Control panel</div></div>
+    <div class="sp"></div>
+    <button class="btn sm" id="refresh">↻</button>
+  </header>
+  <nav class="tabs">
+    <button data-tab="customers" class="on">Customers</button>
+    <button data-tab="plans">Plans</button>
+    <button data-tab="messages">TV messages</button>
+    <button data-tab="settings">Settings</button>
+  </nav>
+  <main>
+    <section id="tCustomers">
+      <div class="stats" id="stats"></div>
+      <div class="search"><input class="in" id="q" placeholder="Search name, email or code…" autocomplete="off"><button class="btn primary" id="newCust">+ New</button></div>
+      <div class="chips" id="filters"></div>
+      <div class="list cards" id="custList"></div>
+    </section>
+    <section id="tPlans" class="hide">
+      <div class="row" style="justify-content:space-between"><h2>Plans</h2><button class="btn primary" id="newPlan">+ New plan</button></div>
+      <p class="note" style="margin-top:0">A plan is the set of addons a customer's TV gets automatically, and how many TVs they can use.</p>
+      <div class="list" id="planList"></div>
+    </section>
+    <section id="tMessages" class="hide">
+      <div class="row" style="justify-content:space-between"><h2>TV messages</h2><button class="btn primary" id="newMsg">+ New message</button></div>
+      <p class="note" style="margin-top:0">Active messages pop up once on customers' TVs.</p>
+      <div class="list" id="msgList"></div>
+    </section>
+    <section id="tSettings" class="hide">
+      <h2>Settings</h2>
+      <div class="card" style="cursor:default">
+        <label class="l" style="margin-top:0">Support message shown on TVs</label><input class="in" id="stSupport">
+        <label class="l">Update link</label><input class="in" id="stUpdate">
+        <label class="l">Minimum app version (build number, 0 = off)</label><input class="in" id="stMin" type="number" min="0">
+        <div class="acts"><button class="btn primary" id="stSave">Save settings</button></div>
+      </div>
+      <div class="card" style="cursor:default;margin-top:10px">
+        <div class="note">Signed in as <b id="stWho"></b><br>Project: <span id="stProj"></span></div>
+        <div class="acts"><button class="btn" id="signOut">Sign out</button></div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<div class="sheet-bg" id="sheetBg"><div class="sheet" id="sheet"></div></div>
+<div id="toast"></div>
+
+<script>
+"use strict";
+/* ---------- config: filled in by Claude when your Supabase project exists ---------- */
+const BUILTIN = { url: "{{SUPA_URL}}", key: "{{SUPA_KEY}}" };
+
+const $=(s,r=document)=>r.querySelector(s);
+const esc=s=>String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const LS={get(k,d){try{const v=localStorage.getItem("fvp:"+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem("fvp:"+k,JSON.stringify(v))}catch(e){}},del(k){try{localStorage.removeItem("fvp:"+k)}catch(e){}}};
+function toast(m,err){const t=$("#toast");t.textContent=m;t.className="on"+(err?" err":"");clearTimeout(t._h);t._h=setTimeout(()=>t.className="",2800)}
+async function copy(t){try{await navigator.clipboard.writeText(t);toast("Copied "+t)}catch(e){toast("Couldn't copy — long-press to select",true)}}
+const toLocalDate=d=>{const x=new Date(d);return new Date(x-x.getTimezoneOffset()*6e4).toISOString().slice(0,10)};
+const fmtDate=d=>d?new Date(d).toLocaleDateString(undefined,{year:"numeric",month:"short",day:"numeric"}):"Never";
+const ago=d=>{if(!d)return"";const s=(Date.now()-new Date(d))/1000;if(s<90)return"just now";if(s<3600)return Math.round(s/60)+" min ago";if(s<86400)return Math.round(s/3600)+" h ago";return Math.round(s/86400)+" days ago"};
+
+/* ---------- tiny Supabase client (auth + REST) ---------- */
+let conn = (BUILTIN.url && !BUILTIN.url.startsWith("{{")) ? BUILTIN : LS.get("conn", null);
+let session = LS.get("session", null);
+async function authReq(path, body){
+  const r=await fetch(conn.url+"/auth/v1/"+path,{method:"POST",headers:{apikey:conn.key,"Content-Type":"application/json"},body:JSON.stringify(body)});
+  const j=await r.json().catch(()=>({})); if(!r.ok) throw new Error(j.error_description||j.msg||j.message||("HTTP "+r.status)); return j;
+}
+async function signIn(email,password){ const j=await authReq("token?grant_type=password",{email,password}); saveSession(j); }
+function saveSession(j){ session={access:j.access_token,refresh:j.refresh_token,exp:Date.now()+(j.expires_in||3600)*1000,email:(j.user&&j.user.email)||(session&&session.email)}; LS.set("session",session); }
+async function token(){
+  if(!session) throw new Error("signed out");
+  if(Date.now() > session.exp-60000){ try{ saveSession(await authReq("token?grant_type=refresh_token",{refresh_token:session.refresh})); }catch(e){ signOut(); throw e; } }
+  return session.access;
+}
+async function db(path,{method="GET",body,prefer}={}){
+  const h={apikey:conn.key,Authorization:"Bearer "+await token(),"Content-Type":"application/json"};
+  if(prefer) h.Prefer=prefer;
+  const r=await fetch(conn.url+"/rest/v1/"+path,{method,headers:h,body:body?JSON.stringify(body):undefined});
+  const txt=await r.text(); let j=null; try{ j=txt?JSON.parse(txt):null; }catch(e){}
+  if(!r.ok){ if(r.status===401){ signOut(); } throw new Error((j&&(j.message||j.hint))||("HTTP "+r.status)); }
+  return j;
+}
+function signOut(){ session=null; LS.del("session"); showLogin(); }
+
+/* ---------- state ---------- */
+let codes=[], plans=[], msgs=[], appSettings={}, filter="all", tab="customers";
+const statusOf=c=>{ if(!c.enabled) return "disabled"; if(c.expires_at && new Date(c.expires_at)<new Date()) return "expired";
+  if(c.expires_at && new Date(c.expires_at)-Date.now()<7*864e5) return "soon"; return "active"; };
+const statusLabel={active:"Active",soon:"Expiring",expired:"Expired",disabled:"Disabled"};
+const planById=id=>plans.find(p=>p.id===id);
+const limitOf=c=>c.max_devices||(planById(c.plan_id)||{}).max_devices||2;
+
+async function loadAll(){
+  try{
+    const [c,p,m,s]=await Promise.all([
+      db("codes?select=*,devices(id,device_id,device_name,app_version,blocked,first_seen,last_seen)&order=created_at.desc"),
+      db("plans?select=*&order=created_at.asc"),
+      db("announcements?select=*&order=created_at.desc"),
+      db("app_settings?select=*&id=eq.1")]);
+    codes=c||[]; plans=p||[]; msgs=m||[]; appSettings=(s&&s[0])||{};
+    render();
+  }catch(e){
+    if(/permission denied|row-level|JWT/i.test(e.message)) toast("Your account isn't an admin yet — run the last line of supabase.sql",true);
+    else toast("Couldn't load: "+e.message,true);
+  }
+}
+function render(){ renderStats(); renderCustomers(); renderPlans(); renderMsgs(); renderSettings(); }
+
+/* ---------- customers ---------- */
+function renderStats(){
+  const by=s=>codes.filter(c=>statusOf(c)===s).length;
+  const devs=codes.reduce((n,c)=>n+(c.devices||[]).filter(d=>!d.blocked).length,0);
+  $("#stats").innerHTML=`<div class="stat g"><b>${by("active")+by("soon")}</b><span>Active customers</span></div>
+    <div class="stat o"><b>${by("soon")}</b><span>Expiring in 7 days</span></div>
+    <div class="stat r"><b>${by("expired")+by("disabled")}</b><span>Expired / disabled</span></div>
+    <div class="stat"><b>${devs}</b><span>TVs in use</span></div>`;
+  const f=[["all","All"],["active","Active"],["soon","Expiring"],["expired","Expired"],["disabled","Disabled"]];
+  $("#filters").innerHTML=f.map(([k,l])=>`<button data-f="${k}" class="${filter===k?"on":""}">${l}</button>`).join("");
+  $("#filters").querySelectorAll("button").forEach(b=>b.onclick=()=>{filter=b.dataset.f;renderStats();renderCustomers();});
+}
+function renderCustomers(){
+  const q=$("#q").value.trim().toLowerCase();
+  const list=codes.filter(c=>(filter==="all"||statusOf(c)===filter||(filter==="active"&&statusOf(c)==="soon"))&&
+    (!q||[c.customer_name,c.customer_email,c.code,c.notes].some(v=>(v||"").toLowerCase().includes(q))));
+  $("#custList").innerHTML=list.length?list.map(c=>{ const st=statusOf(c), p=planById(c.plan_id), dv=(c.devices||[]).filter(d=>!d.blocked).length;
+    return `<button class="card" data-code="${esc(c.code)}"><div class="top"><div class="nm">${esc(c.customer_name||"(no name)")}</div><span class="pill ${st}">${statusLabel[st]}</span></div>
+      <div class="code">${esc(c.code)}</div>
+      <div class="meta"><span>${esc(p?p.name:"No plan")}</span><span>Expires ${esc(fmtDate(c.expires_at))}</span><span>📺 ${dv}/${limitOf(c)}</span></div></button>`; }).join("")
+    : `<div class="empty"><b>${codes.length?"No matches":"No customers yet"}</b>${codes.length?"Try a different search or filter.":(plans.length?"Tap + New to create an activation code.":"Create a plan first, then add customers.")}</div>`;
+  $("#custList").querySelectorAll("[data-code]").forEach(b=>b.onclick=()=>custSheet(codes.find(c=>c.code===b.dataset.code)));
+}
+$("#q").addEventListener("input",renderCustomers);
+
+const ALPH="ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+function newCode(){ const a=new Uint32Array(8); crypto.getRandomValues(a); const s=[...a].map(n=>ALPH[n%ALPH.length]).join(""); return `FVOD-${s.slice(0,4)}-${s.slice(4)}`; }
+function addMonths(base,m){ const d=new Date(Math.max(Date.now(), base?new Date(base).getTime():0)); d.setMonth(d.getMonth()+m); return d.toISOString(); }
+const planOptions=sel=>`<option value="">No plan (no addons pushed)</option>`+plans.map(p=>`<option value="${p.id}" ${p.id===sel?"selected":""}>${esc(p.name)} · ${p.max_devices} TV${p.max_devices>1?"s":""}</option>`).join("");
+
+function custSheet(c){
+  const isNew=!c; c=c||{code:newCode(),enabled:true,plan_id:(plans[0]||{}).id||""};
+  const st=isNew?null:statusOf(c);
+  openSheet(`<h3>${isNew?"New customer":esc(c.customer_name||"Customer")}</h3>
+    ${isNew?`<p class="note">They'll type this code once on their TV.</p>`:`<div class="row" style="margin-top:6px"><span class="pill ${st}">${statusLabel[st]}</span><span class="note">Created ${esc(fmtDate(c.created_at))}</span></div>`}
+    <div class="bigcode" id="ccode">${esc(c.code)}</div>
+    <div class="row" style="justify-content:center"><button class="btn sm" id="cCopy">Copy code</button>${isNew?`<button class="btn sm" id="cRegen">New code</button>`:""}</div>
+    <div class="grid2"><div><label class="l">Name</label><input class="in" id="cName" value="${esc(c.customer_name||"")}" placeholder="Customer name"></div>
+      <div><label class="l">Email (optional)</label><input class="in" id="cEmail" type="email" value="${esc(c.customer_email||"")}"></div></div>
+    <label class="l">Plan</label><select class="in" id="cPlan">${planOptions(c.plan_id)}</select>
+    <div class="grid2"><div><label class="l">${isNew?"Length":"Expires"}</label>
+      ${isNew?`<select class="in" id="cLen"><option value="1">1 month</option><option value="3">3 months</option><option value="6">6 months</option><option value="12">12 months</option><option value="0">Never expires</option><option value="custom">Pick a date…</option></select>`
+        :`<input class="in" id="cExp" type="date" value="${c.expires_at?toLocalDate(c.expires_at):""}">`}
+      <input class="in hide" id="cDate" type="date" style="margin-top:6px"></div>
+      <div><label class="l">TV limit</label><input class="in" id="cMax" type="number" min="1" max="20" value="${esc(c.max_devices||"")}" placeholder="Plan default"></div></div>
+    <label class="l">Notes</label><input class="in" id="cNotes" value="${esc(c.notes||"")}" placeholder="Paid via…, renewal date…">
+    ${isNew?"":`<label class="l">Quick extend</label><div class="row"><button class="btn sm" data-ext="1">+1 month</button><button class="btn sm" data-ext="3">+3 months</button><button class="btn sm" data-ext="12">+1 year</button></div>`}
+    ${isNew?"":`<label class="l">TVs (${(c.devices||[]).filter(d=>!d.blocked).length}/${limitOf(c)})</label>
+      ${(c.devices||[]).length?(c.devices||[]).map(d=>`<div class="dev"><div class="d"><b>${esc(d.device_name||"TV")}${d.blocked?` <span class="bad">· blocked</span>`:""}</b><span>Last seen ${esc(ago(d.last_seen))}${d.app_version?` · app build ${esc(d.app_version)}`:""}</span></div>
+        <button class="btn sm" data-block="${d.id}">${d.blocked?"Unblock":"Block"}</button><button class="btn sm danger" data-rmdev="${d.id}">Remove</button></div>`).join(""):`<p class="note">No TVs have used this code yet.</p>`}`}
+    <div class="acts"><button class="btn primary" id="cSave">${isNew?"Create customer":"Save"}</button>
+      ${isNew?"":`<button class="btn" id="cToggle">${c.enabled?"Disable":"Enable"}</button><button class="btn danger" id="cDel">Delete</button>`}
+      <button class="btn" id="cClose">Close</button></div>`);
+  $("#cCopy").onclick=()=>copy($("#ccode").textContent);
+  const rg=$("#cRegen"); if(rg) rg.onclick=()=>{ $("#ccode").textContent=newCode(); };
+  const len=$("#cLen"); if(len) len.onchange=()=>$("#cDate").classList.toggle("hide",len.value!=="custom");
+  $("#cClose").onclick=closeSheet;
+  $("#cSave").onclick=async()=>{
+    const row={customer_name:$("#cName").value.trim()||null,customer_email:$("#cEmail").value.trim()||null,notes:$("#cNotes").value.trim()||null,
+      plan_id:$("#cPlan").value||null,max_devices:parseInt($("#cMax").value)||null};
+    if(isNew){ const v=len.value; row.code=$("#ccode").textContent; row.expires_at=v==="custom"?($("#cDate").value?new Date($("#cDate").value+"T23:59:59").toISOString():null):(+v?addMonths(null,+v):null); }
+    else row.expires_at=$("#cExp").value?new Date($("#cExp").value+"T23:59:59").toISOString():null;
+    await act(async()=>{ if(isNew) await db("codes",{method:"POST",body:row,prefer:"return=minimal"}); else await db("codes?code=eq."+encodeURIComponent(c.code),{method:"PATCH",body:row,prefer:"return=minimal"}); },
+      isNew?`Created ${row.code}`:"Saved", !isNew);
+    if(isNew){ const created=codes.find(x=>x.code===row.code); if(created) createdSheet(created); }
+  };
+  if(!isNew){
+    document.querySelectorAll("[data-ext]").forEach(b=>b.onclick=()=>act(()=>db("codes?code=eq."+encodeURIComponent(c.code),{method:"PATCH",body:{expires_at:addMonths(c.expires_at,+b.dataset.ext),enabled:true},prefer:"return=minimal"}),"Extended",true));
+    $("#cToggle").onclick=()=>act(()=>db("codes?code=eq."+encodeURIComponent(c.code),{method:"PATCH",body:{enabled:!c.enabled},prefer:"return=minimal"}),c.enabled?"Disabled — their TVs stop working at next check":"Enabled",true);
+    $("#cDel").onclick=()=>confirmSheet(`Delete ${c.customer_name||c.code}?`,"Their TVs will stop working. This can't be undone.",()=>act(()=>db("codes?code=eq."+encodeURIComponent(c.code),{method:"DELETE"}),"Deleted"));
+    document.querySelectorAll("[data-block]").forEach(b=>b.onclick=()=>{ const d=c.devices.find(x=>x.id===b.dataset.block); act(()=>db("devices?id=eq."+d.id,{method:"PATCH",body:{blocked:!d.blocked},prefer:"return=minimal"}),d.blocked?"Unblocked":"Blocked",true); });
+    document.querySelectorAll("[data-rmdev]").forEach(b=>b.onclick=()=>act(()=>db("devices?id=eq."+b.dataset.rmdev,{method:"DELETE"}),"TV removed — that slot is free again",true));
+  }
+}
+function createdSheet(c){
+  openSheet(`<h3>Customer created</h3><p class="note">Send them this code. On the TV they open Forbidden VOD and type it in once.</p>
+    <div class="bigcode">${esc(c.code)}</div>
+    <div class="acts" style="justify-content:center"><button class="btn primary" id="okCopy">Copy code</button><button class="btn" id="okMsg">Copy welcome message</button><button class="btn" id="okClose">Done</button></div>`);
+  $("#okCopy").onclick=()=>copy(c.code);
+  $("#okMsg").onclick=()=>copy(`Welcome to Forbidden VOD!\n\n1. Install the app: ${appSettings.update_url||""}\n2. Open it and enter your activation code: ${c.code}\n\nYour access ${c.expires_at?"runs until "+fmtDate(c.expires_at):"doesn't expire"}.`);
+  $("#okClose").onclick=closeSheet;
+}
+$("#newCust").onclick=()=>{ if(!plans.length){ toast("Create a plan first (Plans tab)"); } custSheet(null); };
+
+/* ---------- plans ---------- */
+function renderPlans(){
+  $("#planList").innerHTML=plans.length?plans.map(p=>{ const n=codes.filter(c=>c.plan_id===p.id).length;
+    return `<button class="card" data-plan="${p.id}"><div class="top"><div class="nm">${esc(p.name)}</div><span class="pill active">${(p.addons||[]).length} addon${(p.addons||[]).length===1?"":"s"}</span></div>
+      <div class="meta"><span>📺 ${p.max_devices} TV${p.max_devices>1?"s":""} per customer</span><span>${n} customer${n===1?"":"s"}</span></div></button>`; }).join("")
+    :`<div class="empty"><b>No plans yet</b>Create one, e.g. “Standard — 2 TVs” with your catalog addon.</div>`;
+  $("#planList").querySelectorAll("[data-plan]").forEach(b=>b.onclick=()=>planSheet(plans.find(p=>p.id===b.dataset.plan)));
+}
+function planSheet(p){
+  const isNew=!p; p=p||{name:"",max_devices:2,addons:[]};
+  openSheet(`<h3>${isNew?"New plan":"Edit plan"}</h3>
+    <div class="grid2"><div><label class="l">Plan name</label><input class="in" id="pName" value="${esc(p.name)}" placeholder="Standard"></div>
+      <div><label class="l">TVs per customer</label><input class="in" id="pMax" type="number" min="1" max="20" value="${esc(p.max_devices)}"></div></div>
+    <label class="l">Addon links (one per line)</label>
+    <textarea class="in" id="pAddons" placeholder="https://…/manifest.json">${esc((p.addons||[]).join("\n"))}</textarea>
+    <p class="note">These install automatically on every TV in this plan, in this order. Customers can still add their own. Don't put personal links that contain your own TorBox key here. Customers add their own AIOStreams link (set up with their own TorBox) on the TV.</p>
+    <div id="pCheck"></div>
+    <div class="acts"><button class="btn primary" id="pSave">${isNew?"Create plan":"Save"}</button><button class="btn" id="pTest">Check links</button>
+      ${isNew?"":`<button class="btn danger" id="pDel">Delete</button>`}<button class="btn" id="pClose">Close</button></div>`);
+  const urls=()=>$("#pAddons").value.split(/\s+/).map(s=>s.trim().replace(/^stremio:\/\//i,"https://")).filter(Boolean);
+  $("#pClose").onclick=closeSheet;
+  $("#pTest").onclick=async()=>{ const box=$("#pCheck"); box.innerHTML=`<p class="note"><span class="spin"></span> Checking…</p>`;
+    const rows=await Promise.all(urls().map(async u=>{ try{ const r=await fetch(u); const m=await r.json(); return `<div class="addonrow"><span class="ok">✓</span><b>${esc(m.name)}</b><span class="u">${esc(u)}</span></div>`; }
+      catch(e){ return `<div class="addonrow"><span class="bad">✗</span><b class="bad">Not reachable</b><span class="u">${esc(u)}</span></div>`; } }));
+    box.innerHTML=rows.join("")||`<p class="note">No links entered.</p>`; };
+  $("#pSave").onclick=async()=>{ const row={name:$("#pName").value.trim()||"Plan",max_devices:parseInt($("#pMax").value)||2,addons:urls()};
+    await act(()=>isNew?db("plans",{method:"POST",body:row,prefer:"return=minimal"}):db("plans?id=eq."+p.id,{method:"PATCH",body:row,prefer:"return=minimal"}),isNew?"Plan created":"Plan saved — TVs pick it up at their next check"); };
+  const del=$("#pDel"); if(del) del.onclick=()=>confirmSheet(`Delete plan “${p.name}”?`,"Customers on it keep working but get no plan addons.",()=>act(()=>db("plans?id=eq."+p.id,{method:"DELETE"}),"Plan deleted"));
+}
+$("#newPlan").onclick=()=>planSheet(null);
+
+/* ---------- messages ---------- */
+function renderMsgs(){
+  $("#msgList").innerHTML=msgs.length?msgs.map(m=>`<div class="card" style="cursor:default"><div class="top"><div class="nm" style="white-space:normal">${esc(m.message)}</div></div>
+    <div class="meta"><span>${esc(m.plan_id?((planById(m.plan_id)||{}).name||"Plan"):"Everyone")}</span><span>${esc(fmtDate(m.created_at))}</span></div>
+    <div class="row" style="margin-top:8px"><button class="btn sm" data-mtog="${m.id}">${m.active?"✓ Showing":"Hidden"}</button><button class="btn sm danger" data-mdel="${m.id}">Delete</button></div></div>`).join("")
+    :`<div class="empty"><b>No messages</b>Send a note to every TV — maintenance, new features, renewals.</div>`;
+  $("#msgList").querySelectorAll("[data-mtog]").forEach(b=>b.onclick=()=>{ const m=msgs.find(x=>x.id===b.dataset.mtog); act(()=>db("announcements?id=eq."+m.id,{method:"PATCH",body:{active:!m.active},prefer:"return=minimal"}),m.active?"Hidden":"Showing"); });
+  $("#msgList").querySelectorAll("[data-mdel]").forEach(b=>b.onclick=()=>act(()=>db("announcements?id=eq."+b.dataset.mdel,{method:"DELETE"}),"Deleted"));
+}
+$("#newMsg").onclick=()=>{ openSheet(`<h3>New TV message</h3><label class="l">Message</label><textarea class="in" id="mText" style="font-family:inherit;font-size:15px" placeholder="Server maintenance tonight 11pm–1am."></textarea>
+  <label class="l">Show to</label><select class="in" id="mPlan"><option value="">Everyone</option>${plans.map(p=>`<option value="${p.id}">${esc(p.name)} only</option>`).join("")}</select>
+  <div class="acts"><button class="btn primary" id="mSave">Send to TVs</button><button class="btn" id="mClose">Cancel</button></div>`);
+  $("#mClose").onclick=closeSheet;
+  $("#mSave").onclick=()=>{ const t=$("#mText").value.trim(); if(!t) return; act(()=>db("announcements",{method:"POST",body:{message:t,plan_id:$("#mPlan").value||null},prefer:"return=minimal"}),"Message sent"); }; };
+
+/* ---------- settings ---------- */
+function renderSettings(){
+  $("#stSupport").value=appSettings.support_text||""; $("#stUpdate").value=appSettings.update_url||""; $("#stMin").value=appSettings.min_version||0;
+  $("#stWho").textContent=(session&&session.email)||""; $("#stProj").textContent=conn?conn.url.replace(/^https:\/\//,""):"";
+}
+$("#stSave").onclick=()=>act(()=>db("app_settings?id=eq.1",{method:"PATCH",body:{support_text:$("#stSupport").value.trim(),update_url:$("#stUpdate").value.trim(),min_version:parseInt($("#stMin").value)||0},prefer:"return=minimal"}),"Settings saved");
+$("#signOut").onclick=signOut;
+
+/* ---------- shared ---------- */
+let reopen=null;
+async function act(fn,okMsg,keepOpen){
+  try{ await fn(); toast(okMsg); const open=keepOpen&&reopen; await loadAll(); if(open) open(); else closeSheet(); }
+  catch(e){ toast(e.message.includes("duplicate")?"That code already exists — tap New code":e.message,true); }
+}
+function openSheet(h){ $("#sheet").innerHTML=`<div class="grab"></div>`+h; $("#sheetBg").classList.add("on");
+  const code=$("#ccode"); reopen = code ? ()=>{ const c=codes.find(x=>x.code===code.textContent); if(c) custSheet(c); } : null; }
+function closeSheet(){ $("#sheetBg").classList.remove("on"); reopen=null; }
+$("#sheetBg").addEventListener("click",e=>{ if(e.target.id==="sheetBg") closeSheet(); });
+function confirmSheet(t,body,fn){ openSheet(`<h3>${esc(t)}</h3><p class="note">${esc(body)}</p><div class="acts"><button class="btn danger" id="yOk">Yes, do it</button><button class="btn" id="yNo">Cancel</button></div>`);
+  $("#yOk").onclick=fn; $("#yNo").onclick=closeSheet; }
+document.querySelectorAll("nav.tabs button").forEach(b=>b.onclick=()=>{ tab=b.dataset.tab;
+  document.querySelectorAll("nav.tabs button").forEach(x=>x.classList.toggle("on",x===b));
+  ["customers","plans","messages","settings"].forEach(t=>$("#t"+t[0].toUpperCase()+t.slice(1)).classList.toggle("hide",t!==tab)); });
+$("#refresh").onclick=()=>loadAll().then(()=>toast("Up to date"));
+
+/* ---------- boot ---------- */
+function showLogin(){ $("#vApp").classList.add("hide"); $("#vLogin").classList.remove("hide");
+  $("#setupForm").classList.toggle("hide",!!conn); $("#loginForm").classList.toggle("hide",!conn); }
+$("#setupForm").onsubmit=e=>{ e.preventDefault(); const url=$("#sUrl").value.trim().replace(/\/+$/,""), key=$("#sKey").value.trim();
+  if(!/^https:\/\/.+/.test(url)||key.length<20) return toast("Check the URL and key",true); conn={url,key}; LS.set("conn",conn); showLogin(); };
+$("#resetConn").onclick=e=>{ e.preventDefault(); if(BUILTIN.url&&!BUILTIN.url.startsWith("{{")) return toast("This panel is built for one project"); LS.del("conn"); conn=null; showLogin(); };
+$("#loginForm").onsubmit=async e=>{ e.preventDefault(); $("#lBtn").disabled=true; $("#lMsg").textContent="";
+  try{ await signIn($("#lEmail").value.trim(),$("#lPass").value); start(); }catch(err){ $("#lMsg").innerHTML=`<span class="bad">${esc(err.message)}</span>`; } $("#lBtn").disabled=false; };
+function start(){ $("#vLogin").classList.add("hide"); $("#vApp").classList.remove("hide"); loadAll(); setInterval(()=>{ if(session) loadAll(); },60000); }
+if(conn && session) start(); else showLogin();
+</script>
+</body>
+</html>
