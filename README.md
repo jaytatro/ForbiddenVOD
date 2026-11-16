@@ -7,7 +7,12 @@
 An Android TV / Google TV / Fire TV app that plays content from Stremio-compatible addons.
 It works with the remote's arrows, OK, Back and play/pause buttons.
 
-## Build the APK (about 10 minutes the first time)
+## Download the APK
+
+Every change pushed to `main` is built automatically by GitHub Actions.
+**Latest APK:** https://github.com/jaytatro/ForbiddenVOD/releases/latest/download/ForbiddenVOD.apk
+
+## Build the APK yourself (optional, about 10 minutes the first time)
 
 1. Install **Android Studio** (free): https://developer.android.com/studio
 2. Unzip this folder, then in Android Studio choose **File → Open** and pick the `ForbiddenVOD` folder.
