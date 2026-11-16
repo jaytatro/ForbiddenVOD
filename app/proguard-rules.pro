@@ -1,0 +1,1 @@
+-keepclassmembers class com.forbiddenvod.tv.MainActivity$Bridge { @android.webkit.JavascriptInterface <methods>; }
