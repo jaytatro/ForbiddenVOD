@@ -51,6 +51,13 @@ The whole interface is one file: `app/src/main/assets/index.html`. Colors are at
 Launcher banner: `app/src/main/res/drawable-xhdpi/banner.png` (320×180).
 App icon: `app/src/main/res/mipmap-*/ic_launcher.png`.
 
+## Signing key (so updates install over the old version)
+
+GitHub Actions signs the APK with a permanent key stored in the repo's
+**Settings → Secrets and variables → Actions**: `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`.
+Keep a private backup of the `.jks` file and password — if they're lost, existing installs can't be updated.
+Never commit the key to this repo.
+
 ## Before sharing the app with others
 
 The release build is signed with Android Studio's debug key so it installs right away. To publish or

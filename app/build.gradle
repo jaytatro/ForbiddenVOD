@@ -10,16 +10,31 @@ android {
         applicationId "com.forbiddenvod.tv"
         minSdk 23
         targetSdk 35
-        versionCode 1
-        versionName "1.0"
+        // CI passes the build number so every new APK installs as an update.
+        versionCode (System.getenv("VERSION_CODE") ?: "1").toInteger()
+        versionName "1.0." + (System.getenv("VERSION_CODE") ?: "0")
+    }
+
+    // Permanent release key: supplied by GitHub Actions secrets (never committed).
+    def ksFile = System.getenv("ANDROID_KEYSTORE_FILE")
+    def hasReleaseKey = ksFile != null && file(ksFile).exists()
+
+    signingConfigs {
+        if (hasReleaseKey) {
+            release {
+                storeFile file(ksFile)
+                storePassword System.getenv("ANDROID_KEYSTORE_PASSWORD")
+                keyAlias System.getenv("ANDROID_KEY_ALIAS")
+                keyPassword System.getenv("ANDROID_KEYSTORE_PASSWORD")
+            }
+        }
     }
 
     buildTypes {
         release {
             minifyEnabled false
-            // Signed with the debug key so "Build APK" gives you an installable file.
-            // Replace with your own keystore before sharing the app widely.
-            signingConfig signingConfigs.debug
+            // Uses the permanent key when available, otherwise the debug key so local builds still work.
+            signingConfig hasReleaseKey ? signingConfigs.release : signingConfigs.debug
         }
     }
 
