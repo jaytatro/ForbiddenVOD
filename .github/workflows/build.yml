@@ -1,0 +1,118 @@
+name: Build Forbidden Vid
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: forbiddenvid-build
+  cancel-in-progress: true
+
+env:
+  # NuvioTV source version the Forbidden Vid patch is based on (Nuvio 1.1.1).
+  NUVIO_COMMIT: 4cb3e3492a1e17a911702e74926bedecd593edea
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout Forbidden Vid
+        uses: actions/checkout@v4
+        with:
+          path: fv
+
+      - name: Get NuvioTV source and apply Forbidden Vid changes
+        run: |
+          git init -q nuvio
+          cd nuvio
+          git remote add origin https://github.com/NuvioMedia/NuvioTV.git
+          git fetch -q --depth 1 origin "$NUVIO_COMMIT"
+          git checkout -q FETCH_HEAD
+          git apply --binary --whitespace=nowarn ../fv/patches/forbiddenvid.patch
+          echo "Patch applied: $(git status --short | wc -l) files changed"
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Prepare local.properties (Nuvio account server + optional TMDB key)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/nuvio-apk"
+          gh release download --repo NuvioMedia/NuvioTV --pattern '*arm64-v8a*.apk' --dir "$RUNNER_TEMP/nuvio-apk" \
+            || gh release download --repo NuvioMedia/NuvioTV --pattern '*.apk' --dir "$RUNNER_TEMP/nuvio-apk"
+          APK=$(ls "$RUNNER_TEMP"/nuvio-apk/*.apk | head -1)
+          python3 fv/scripts/nuvio_backend_props.py "$APK" > nuvio/local.properties
+          echo "TMDB_API_KEY=${TMDB_API_KEY}" >> nuvio/local.properties
+          touch nuvio/local.dev.properties
+          if [ -z "$TMDB_API_KEY" ]; then
+            echo "::warning::No TMDB_API_KEY secret - kids profiles can only use ratings that addons provide."
+          fi
+
+      - name: Signing key
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
+            {
+              echo "NUVIO_RELEASE_STORE_FILE=$RUNNER_TEMP/release.jks"
+              echo "NUVIO_RELEASE_KEY_ALIAS=$KEY_ALIAS"
+              echo "NUVIO_RELEASE_KEY_PASSWORD=$KEYSTORE_PASSWORD"
+              echo "NUVIO_RELEASE_STORE_PASSWORD=$KEYSTORE_PASSWORD"
+            } >> "$GITHUB_ENV"
+            echo "Using your permanent signing key"
+          else
+            keytool -genkeypair -keystore "$RUNNER_TEMP/temp.jks" -storepass android -alias temp \
+              -keypass android -dname "CN=Forbidden Vid,O=Forbidden Vid,C=US" -keyalg RSA -keysize 2048 -validity 10000
+            {
+              echo "NUVIO_RELEASE_STORE_FILE=$RUNNER_TEMP/temp.jks"
+              echo "NUVIO_RELEASE_KEY_ALIAS=temp"
+              echo "NUVIO_RELEASE_KEY_PASSWORD=android"
+              echo "NUVIO_RELEASE_STORE_PASSWORD=android"
+            } >> "$GITHUB_ENV"
+            echo "::warning::No signing secrets - APK signed with a temporary key (updates need uninstall first)."
+          fi
+
+      - name: Build APK
+        working-directory: nuvio
+        run: ./gradlew :app:assembleFullRelease --stacktrace
+
+      - name: Collect APKs
+        run: |
+          mkdir out
+          OUT=nuvio/app/build/outputs/apk/full/release
+          ls -la "$OUT"
+          cp "$OUT"/app-full-arm64-v8a-release.apk out/ForbiddenVid-arm64.apk
+          cp "$OUT"/app-full-armeabi-v7a-release.apk out/ForbiddenVid-armv7.apk
+          cp "$OUT"/app-full-universal-release.apk out/ForbiddenVid-universal.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ForbiddenVid
+          path: out/*.apk
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: fv-${{ github.run_number }}
+          name: Forbidden Vid (build ${{ github.run_number }})
+          make_latest: true
+          body: |
+            Forbidden Vid for Android TV — based on NuvioTV 1.1.1.
+            Most TVs and Fire TV / Google TV: **ForbiddenVid-arm64.apk**. Older 32-bit boxes: **ForbiddenVid-armv7.apk**.
+          files: out/*.apk
