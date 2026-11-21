@@ -1,8 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <style name="AppTheme" parent="@android:style/Theme.DeviceDefault.NoActionBar.Fullscreen">
-        <item name="android:windowBackground">@color/fv_bg</item>
-        <item name="android:colorAccent">@color/fv_toxic</item>
-        <item name="android:windowNoTitle">true</item>
-    </style>
-</resources>
