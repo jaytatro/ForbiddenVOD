@@ -55,11 +55,21 @@ jobs:
             || gh release download --repo NuvioMedia/NuvioTV --pattern '*.apk' --dir "$RUNNER_TEMP/nuvio-apk"
           APK=$(ls "$RUNNER_TEMP"/nuvio-apk/*.apk | head -1)
           python3 fv/scripts/nuvio_backend_props.py "$APK" > nuvio/local.properties
+          # TMDB key for kids ratings: your own secret if set, otherwise the one inside Nuvio's app.
+          if [ -z "$TMDB_API_KEY" ]; then
+            for k in $(python3 fv/scripts/nuvio_tmdb_candidates.py "$APK"); do
+              echo "::add-mask::$k"
+              code=$(curl -s -o /dev/null -w "%{http_code}" "https://api.themoviedb.org/3/configuration?api_key=$k")
+              if [ "$code" = "200" ]; then TMDB_API_KEY="$k"; break; fi
+            done
+          fi
+          if [ -n "$TMDB_API_KEY" ]; then
+            echo "TMDB key found - kids ratings enabled"
+          else
+            echo "::warning::No working TMDB key found - kids profiles will be empty."
+          fi
           echo "TMDB_API_KEY=${TMDB_API_KEY}" >> nuvio/local.properties
           touch nuvio/local.dev.properties
-          if [ -z "$TMDB_API_KEY" ]; then
-            echo "::warning::No TMDB_API_KEY secret - kids profiles can only use ratings that addons provide."
-          fi
 
       - name: Signing key
         # Always the same permanent key (signing/forbiddenvid.jks) so each build installs over the last one.

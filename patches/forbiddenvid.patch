@@ -416,12 +416,151 @@ index 349a4f389..0ec8682b4 100644
                              CompositionLocalProvider(LocalNavViewModelStoreOwner provides navViewModelStoreOwner) {
                                  if (modernSidebarEnabled) {
                                      ModernSidebarScaffold(
+diff --git a/app/src/main/java/com/nuvio/tv/core/kids/KidsCatalogService.kt b/app/src/main/java/com/nuvio/tv/core/kids/KidsCatalogService.kt
+new file mode 100644
+index 000000000..97a1d0134
+--- /dev/null
++++ b/app/src/main/java/com/nuvio/tv/core/kids/KidsCatalogService.kt
+@@ -0,0 +1,133 @@
++package com.nuvio.tv.core.kids
++
++import android.content.Context
++import android.util.Log
++import com.nuvio.tv.BuildConfig
++import com.nuvio.tv.data.remote.api.TmdbApi
++import com.nuvio.tv.data.remote.api.TmdbDiscoverResult
++import com.nuvio.tv.domain.model.ContentType
++import com.nuvio.tv.domain.model.MetaPreview
++import com.nuvio.tv.domain.model.PosterShape
++import dagger.hilt.android.qualifiers.ApplicationContext
++import kotlinx.coroutines.CancellationException
++import kotlinx.coroutines.async
++import kotlinx.coroutines.awaitAll
++import kotlinx.coroutines.coroutineScope
++import kotlinx.coroutines.sync.Semaphore
++import kotlinx.coroutines.sync.withPermit
++import java.util.concurrent.ConcurrentHashMap
++import javax.inject.Inject
++import javax.inject.Singleton
++
++/**
++ * Forbidden Vid kids-only catalogs, built straight from TMDB:
++ * movies rated PG / PG-13 and shows rated TV-Y / TV-Y7 / TV-G / TV-PG (US ratings).
++ * Every title's rating is checked again before it is shown.
++ */
++@Singleton
++class KidsCatalogService @Inject constructor(
++    @ApplicationContext context: Context,
++    private val tmdbApi: TmdbApi,
++    private val kidsContentFilter: KidsContentFilter
++) {
++    private val prefs = context.getSharedPreferences("fv_kids_catalog", Context.MODE_PRIVATE)
++    private val memory = ConcurrentHashMap<String, String>()
++    private val permits = Semaphore(8)
++
++    val hasRatingsSource: Boolean get() = BuildConfig.TMDB_API_KEY.isNotBlank()
++
++    suspend fun movies(genreId: Int?, page: Int): List<MetaPreview> {
++        val key = BuildConfig.TMDB_API_KEY.takeIf { it.isNotBlank() } ?: return emptyList()
++        val results = runCatching {
++            tmdbApi.discoverKidsMovies(apiKey = key, withGenres = genreId?.toString(), page = page).body()?.results
++        }.getOrNull().orEmpty()
++        return verified(results, isTv = false, key = key)
++    }
++
++    suspend fun tv(genreId: Int?, page: Int): List<MetaPreview> {
++        val key = BuildConfig.TMDB_API_KEY.takeIf { it.isNotBlank() } ?: return emptyList()
++        val results = runCatching {
++            tmdbApi.discoverKidsTv(apiKey = key, withGenres = genreId?.toString(), page = page).body()?.results
++        }.getOrNull().orEmpty()
++        return verified(results, isTv = true, key = key)
++    }
++
++    private suspend fun verified(results: List<TmdbDiscoverResult>, isTv: Boolean, key: String): List<MetaPreview> =
++        coroutineScope {
++            results.map { result ->
++                async {
++                    permits.withPermit {
++                        try {
++                            val rating = usRating(result.id, isTv, key) ?: return@withPermit null
++                            if (rating !in KidsContentFilter.ALLOWED) return@withPermit null
++                            val imdb = imdbId(result.id, isTv, key)
++                            toPreview(result, isTv, imdb, rating)
++                        } catch (e: CancellationException) {
++                            throw e
++                        } catch (e: Exception) {
++                            Log.w("KidsCatalog", "Skipping ${result.id}: ${e.message}")
++                            null
++                        }
++                    }
++                }
++            }.awaitAll().filterNotNull()
++        }
++
++    /** US certification for a TMDB title (cached). Null when unknown. */
++    private suspend fun usRating(tmdbId: Int, isTv: Boolean, key: String): String? {
++        val cacheKey = (if (isTv) "tvr:" else "mvr:") + tmdbId
++        cached(cacheKey)?.let { return it.ifEmpty { null } }
++        val rating = if (isTv) {
++            tmdbApi.getTvContentRatings(tmdbId, key).body()?.results.orEmpty()
++                .firstOrNull { it.iso31661 == "US" }?.rating
++        } else {
++            tmdbApi.getMovieReleaseDates(tmdbId, key).body()?.results.orEmpty()
++                .firstOrNull { it.iso31661 == "US" }?.releaseDates.orEmpty()
++                .mapNotNull { it.certification?.takeIf(String::isNotBlank) }
++                .firstOrNull()
++        }?.let(KidsContentFilter::normalize).orEmpty()
++        store(cacheKey, rating)
++        return rating.ifEmpty { null }
++    }
++
++    private suspend fun imdbId(tmdbId: Int, isTv: Boolean, key: String): String? {
++        val cacheKey = (if (isTv) "tvi:" else "mvi:") + tmdbId
++        cached(cacheKey)?.let { return it.ifEmpty { null } }
++        val imdb = (if (isTv) tmdbApi.getTvExternalIds(tmdbId, key) else tmdbApi.getMovieExternalIds(tmdbId, key))
++            .body()?.imdbId?.takeIf { it.startsWith("tt") }.orEmpty()
++        store(cacheKey, imdb)
++        return imdb.ifEmpty { null }
++    }
++
++    private fun cached(key: String): String? = memory[key] ?: prefs.getString(key, null)?.also { memory[key] = it }
++
++    private fun store(key: String, value: String) {
++        memory[key] = value
++        prefs.edit().putString(key, value).apply()
++    }
++
++    private fun toPreview(r: TmdbDiscoverResult, isTv: Boolean, imdb: String?, rating: String): MetaPreview {
++        val id = imdb ?: "tmdb:${r.id}"
++        val rawType = if (isTv) "series" else "movie"
++        kidsContentFilter.remember(id, rawType, rating)
++        val date = if (isTv) r.firstAirDate else r.releaseDate
++        return MetaPreview(
++            id = id,
++            type = if (isTv) ContentType.SERIES else ContentType.MOVIE,
++            rawType = rawType,
++            name = (if (isTv) r.name else r.title) ?: r.originalTitle ?: r.originalName ?: "",
++            poster = r.posterPath?.let { "https://image.tmdb.org/t/p/w500$it" },
++            posterShape = PosterShape.POSTER,
++            background = r.backdropPath?.let { "https://image.tmdb.org/t/p/w1280$it" },
++            logo = null,
++            description = r.overview?.takeIf { it.isNotBlank() },
++            releaseInfo = date?.take(4),
++            released = date?.takeIf { it.isNotBlank() },
++            imdbRating = r.voteAverage?.toFloat(),
++            voteCount = r.voteCount,
++            genres = emptyList(),
++            ageRating = rating,
++            imdbId = imdb
++        )
++    }
++}
 diff --git a/app/src/main/java/com/nuvio/tv/core/kids/KidsContentFilter.kt b/app/src/main/java/com/nuvio/tv/core/kids/KidsContentFilter.kt
 new file mode 100644
-index 000000000..1050f8274
+index 000000000..826a08d68
 --- /dev/null
 +++ b/app/src/main/java/com/nuvio/tv/core/kids/KidsContentFilter.kt
-@@ -0,0 +1,118 @@
+@@ -0,0 +1,126 @@
 +package com.nuvio.tv.core.kids
 +
 +import android.util.Log
@@ -476,6 +615,14 @@ index 000000000..1050f8274
 +        val direct = ageRating?.let(::normalize)?.takeIf { it.isNotEmpty() }
 +        val rating = direct ?: ratingFor(id, type, imdbId)
 +        return rating in ALLOWED
++    }
++
++    /** Lets the kids catalogs share ratings they already verified, so detail pages open instantly. */
++    fun remember(id: String, type: String, rating: String) {
++        val cacheKey = "$type:$id"
++        val normalized = normalize(rating)
++        cache[cacheKey] = normalized
++        saved.edit().putString(cacheKey, normalized).apply()
 +    }
 +
 +    private suspend fun ratingFor(id: String, type: String, imdbId: String?): String {
@@ -658,6 +805,45 @@ index 1d0da5b7e..d82e26a76 100644
          } else {
              listOf(defaultPrimaryProfile())
          }
+diff --git a/app/src/main/java/com/nuvio/tv/data/remote/api/TmdbApi.kt b/app/src/main/java/com/nuvio/tv/data/remote/api/TmdbApi.kt
+index 2248fd9f9..1da389c00 100644
+--- a/app/src/main/java/com/nuvio/tv/data/remote/api/TmdbApi.kt
++++ b/app/src/main/java/com/nuvio/tv/data/remote/api/TmdbApi.kt
+@@ -160,6 +160,34 @@ interface TmdbApi {
+         @Query("api_key") apiKey: String
+     ): Response<TmdbNetworkDetailsResponse>
+ 
++    /** Forbidden Vid kids catalogs: movies limited by US certification. */
++    @GET("discover/movie")
++    suspend fun discoverKidsMovies(
++        @Query("api_key") apiKey: String,
++        @Query("certification_country") certificationCountry: String = "US",
++        @Query("certification") certification: String = "PG|PG-13",
++        @Query("include_adult") includeAdult: Boolean = false,
++        @Query("sort_by") sortBy: String = "popularity.desc",
++        @Query("vote_count.gte") voteCountGte: Int = 50,
++        @Query("with_genres") withGenres: String? = null,
++        @Query("language") language: String = "en-US",
++        @Query("page") page: Int = 1
++    ): Response<TmdbDiscoverResponse>
++
++    /** Forbidden Vid kids catalogs: TV limited by US content rating. */
++    @GET("discover/tv")
++    suspend fun discoverKidsTv(
++        @Query("api_key") apiKey: String,
++        @Query("certification_country") certificationCountry: String = "US",
++        @Query("certification") certification: String = "TV-Y|TV-Y7|TV-G|TV-PG",
++        @Query("include_adult") includeAdult: Boolean = false,
++        @Query("sort_by") sortBy: String = "popularity.desc",
++        @Query("vote_count.gte") voteCountGte: Int = 20,
++        @Query("with_genres") withGenres: String? = null,
++        @Query("language") language: String = "en-US",
++        @Query("page") page: Int = 1
++    ): Response<TmdbDiscoverResponse>
++
+     @GET("discover/movie")
+     suspend fun discoverMovies(
+         @Query("api_key") apiKey: String,
 diff --git a/app/src/main/java/com/nuvio/tv/data/repository/CatalogRepositoryImpl.kt b/app/src/main/java/com/nuvio/tv/data/repository/CatalogRepositoryImpl.kt
 index 8490d68e4..554427149 100644
 --- a/app/src/main/java/com/nuvio/tv/data/repository/CatalogRepositoryImpl.kt
@@ -705,47 +891,165 @@ index 8490d68e4..554427149 100644
                      TAG,
                      "Catalog fetch success addonId=$addonId type=$type catalogId=$catalogId items=${items.size}"
 diff --git a/app/src/main/java/com/nuvio/tv/ui/navigation/NuvioNavHost.kt b/app/src/main/java/com/nuvio/tv/ui/navigation/NuvioNavHost.kt
-index cf44453c3..1606c7ba4 100644
+index cf44453c3..e26a41e7a 100644
 --- a/app/src/main/java/com/nuvio/tv/ui/navigation/NuvioNavHost.kt
 +++ b/app/src/main/java/com/nuvio/tv/ui/navigation/NuvioNavHost.kt
-@@ -1231,6 +1231,44 @@ private fun PlaybackNavHost(
+@@ -244,48 +244,55 @@ private fun PlaybackNavHost(
+                 }
+             }
+ 
+-            HomeScreen(
+-                onNavigateToDetail = { itemId, itemType, addonBaseUrl ->
+-                    val heroBackdrop = HeroBackdropState.consumeAndClear()
+-                    navController.navigate(
+-                        Screen.Detail.createRoute(
+-                            itemId = itemId,
+-                            itemType = itemType,
+-                            addonBaseUrl = addonBaseUrl,
+-                            heroBackdropUrl = heroBackdrop
++            com.nuvio.tv.ui.screens.kids.KidsGate(
++                kidsContent = {
++                    com.nuvio.tv.ui.screens.kids.KidsHomeScreen(onNavigateToDetail = { kidsId, kidsType -> navController.navigate(Screen.Detail.createRoute(itemId = kidsId, itemType = kidsType, addonBaseUrl = null)) })
++                },
++                normalContent = {
++                HomeScreen(
++                    onNavigateToDetail = { itemId, itemType, addonBaseUrl ->
++                        val heroBackdrop = HeroBackdropState.consumeAndClear()
++                        navController.navigate(
++                            Screen.Detail.createRoute(
++                                itemId = itemId,
++                                itemType = itemType,
++                                addonBaseUrl = addonBaseUrl,
++                                heroBackdropUrl = heroBackdrop
++                            )
+                         )
+-                    )
+-                },
+-                onContinueWatchingClick = onContinueWatchingClick@{ item ->
+-                    if (!playbackAvailability.canStream(item)) {
+-                        Toast.makeText(context, R.string.playback_unavailable_message, Toast.LENGTH_SHORT).show()
+-                        return@onContinueWatchingClick
+-                    }
+-                    navController.navigate(createContinueWatchingRoute(item))
+-                },
+-                onContinueWatchingStartFromBeginning = onContinueWatchingStartFromBeginning@{ item ->
+-                    if (!playbackAvailability.canStream(item)) {
+-                        Toast.makeText(context, R.string.playback_unavailable_message, Toast.LENGTH_SHORT).show()
+-                        return@onContinueWatchingStartFromBeginning
+-                    }
+-                    navController.navigate(
+-                        createContinueWatchingRoute(item, startFromBeginning = true)
+-                    )
+-                },
+-                onContinueWatchingPlayManually = onContinueWatchingPlayManually@{ item ->
+-                    if (!playbackAvailability.canStream(item)) {
+-                        Toast.makeText(context, R.string.playback_unavailable_message, Toast.LENGTH_SHORT).show()
+-                        return@onContinueWatchingPlayManually
++                    },
++                    onContinueWatchingClick = onContinueWatchingClick@{ item ->
++                        if (!playbackAvailability.canStream(item)) {
++                            Toast.makeText(context, R.string.playback_unavailable_message, Toast.LENGTH_SHORT).show()
++                            return@onContinueWatchingClick
++                        }
++                        navController.navigate(createContinueWatchingRoute(item))
++                    },
++                    onContinueWatchingStartFromBeginning = onContinueWatchingStartFromBeginning@{ item ->
++                        if (!playbackAvailability.canStream(item)) {
++                            Toast.makeText(context, R.string.playback_unavailable_message, Toast.LENGTH_SHORT).show()
++                            return@onContinueWatchingStartFromBeginning
++                        }
++                        navController.navigate(
++                            createContinueWatchingRoute(item, startFromBeginning = true)
++                        )
++                    },
++                    onContinueWatchingPlayManually = onContinueWatchingPlayManually@{ item ->
++                        if (!playbackAvailability.canStream(item)) {
++                            Toast.makeText(context, R.string.playback_unavailable_message, Toast.LENGTH_SHORT).show()
++                            return@onContinueWatchingPlayManually
++                        }
++                        navController.navigate(
++                            createContinueWatchingRoute(item, manualSelection = true)
++                        )
++                    },
++                    onNavigateToCatalogSeeAll = { catalogId, addonId, type ->
++                        navController.navigate(Screen.CatalogSeeAll.createRoute(catalogId, addonId, type))
++                    },
++                    onNavigateToFolderDetail = { collectionId, folderId ->
++                        navController.navigate(Screen.FolderDetail.createRoute(collectionId, folderId))
+                     }
+-                    navController.navigate(
+-                        createContinueWatchingRoute(item, manualSelection = true)
+-                    )
+-                },
+-                onNavigateToCatalogSeeAll = { catalogId, addonId, type ->
+-                    navController.navigate(Screen.CatalogSeeAll.createRoute(catalogId, addonId, type))
+-                },
+-                onNavigateToFolderDetail = { collectionId, folderId ->
+-                    navController.navigate(Screen.FolderDetail.createRoute(collectionId, folderId))
++                )
+                 }
+             )
+         }
+@@ -1231,6 +1238,66 @@ private fun PlaybackNavHost(
              )
          }
  
 +        composable(Screen.Movies.route) {
-+            DiscoverScreen(
-+                showBuiltInHeader = !hideBuiltInHeaders,
-+                lockedType = "movie",
-+                titleOverride = androidx.compose.ui.res.stringResource(com.nuvio.tv.R.string.fv_nav_movies),
-+                onNavigateToDetail = { itemId, itemType, addonBaseUrl ->
-+                    val heroBackdrop = HeroBackdropState.consumeAndClear()
-+                    navController.navigate(
-+                        Screen.Detail.createRoute(
-+                            itemId = itemId,
-+                            itemType = itemType,
-+                            addonBaseUrl = addonBaseUrl,
-+                            heroBackdropUrl = heroBackdrop
-+                        )
++            com.nuvio.tv.ui.screens.kids.KidsGate(
++                kidsContent = {
++                    com.nuvio.tv.ui.screens.kids.KidsBrowseScreen(
++                        type = "movie",
++                        title = androidx.compose.ui.res.stringResource(com.nuvio.tv.R.string.fv_nav_movies),
++                        onNavigateToDetail = { kidsId, kidsType -> navController.navigate(Screen.Detail.createRoute(itemId = kidsId, itemType = kidsType, addonBaseUrl = null)) }
 +                    )
++                },
++                normalContent = {
++                DiscoverScreen(
++                    showBuiltInHeader = !hideBuiltInHeaders,
++                    lockedType = "movie",
++                    titleOverride = androidx.compose.ui.res.stringResource(com.nuvio.tv.R.string.fv_nav_movies),
++                    onNavigateToDetail = { itemId, itemType, addonBaseUrl ->
++                        val heroBackdrop = HeroBackdropState.consumeAndClear()
++                        navController.navigate(
++                            Screen.Detail.createRoute(
++                                itemId = itemId,
++                                itemType = itemType,
++                                addonBaseUrl = addonBaseUrl,
++                                heroBackdropUrl = heroBackdrop
++                            )
++                        )
++                    }
++                )
 +                }
 +            )
 +        }
 +
 +        composable(Screen.Series.route) {
-+            DiscoverScreen(
-+                showBuiltInHeader = !hideBuiltInHeaders,
-+                lockedType = "series",
-+                titleOverride = androidx.compose.ui.res.stringResource(com.nuvio.tv.R.string.fv_nav_tv_series),
-+                onNavigateToDetail = { itemId, itemType, addonBaseUrl ->
-+                    val heroBackdrop = HeroBackdropState.consumeAndClear()
-+                    navController.navigate(
-+                        Screen.Detail.createRoute(
-+                            itemId = itemId,
-+                            itemType = itemType,
-+                            addonBaseUrl = addonBaseUrl,
-+                            heroBackdropUrl = heroBackdrop
-+                        )
++            com.nuvio.tv.ui.screens.kids.KidsGate(
++                kidsContent = {
++                    com.nuvio.tv.ui.screens.kids.KidsBrowseScreen(
++                        type = "series",
++                        title = androidx.compose.ui.res.stringResource(com.nuvio.tv.R.string.fv_nav_tv_series),
++                        onNavigateToDetail = { kidsId, kidsType -> navController.navigate(Screen.Detail.createRoute(itemId = kidsId, itemType = kidsType, addonBaseUrl = null)) }
 +                    )
++                },
++                normalContent = {
++                DiscoverScreen(
++                    showBuiltInHeader = !hideBuiltInHeaders,
++                    lockedType = "series",
++                    titleOverride = androidx.compose.ui.res.stringResource(com.nuvio.tv.R.string.fv_nav_tv_series),
++                    onNavigateToDetail = { itemId, itemType, addonBaseUrl ->
++                        val heroBackdrop = HeroBackdropState.consumeAndClear()
++                        navController.navigate(
++                            Screen.Detail.createRoute(
++                                itemId = itemId,
++                                itemType = itemType,
++                                addonBaseUrl = addonBaseUrl,
++                                heroBackdropUrl = heroBackdrop
++                            )
++                        )
++                    }
++                )
 +                }
 +            )
 +        }
@@ -863,6 +1167,332 @@ index f2ca5dec4..cf2e1820f 100644
                  rebuildCatalogOrder(addonsCache)
                  scheduleUpdateCatalogRows()
              }
+diff --git a/app/src/main/java/com/nuvio/tv/ui/screens/kids/KidsScreens.kt b/app/src/main/java/com/nuvio/tv/ui/screens/kids/KidsScreens.kt
+new file mode 100644
+index 000000000..641375e45
+--- /dev/null
++++ b/app/src/main/java/com/nuvio/tv/ui/screens/kids/KidsScreens.kt
+@@ -0,0 +1,182 @@
++@file:OptIn(ExperimentalTvMaterial3Api::class)
++
++package com.nuvio.tv.ui.screens.kids
++
++import androidx.compose.foundation.background
++import androidx.compose.foundation.layout.Arrangement
++import androidx.compose.foundation.layout.Box
++import androidx.compose.foundation.layout.Column
++import androidx.compose.foundation.layout.PaddingValues
++import androidx.compose.foundation.layout.Row
++import androidx.compose.foundation.layout.fillMaxSize
++import androidx.compose.foundation.layout.fillMaxWidth
++import androidx.compose.foundation.layout.padding
++import androidx.compose.foundation.lazy.LazyColumn
++import androidx.compose.foundation.lazy.LazyRow
++import androidx.compose.foundation.lazy.grid.GridCells
++import androidx.compose.foundation.lazy.grid.GridItemSpan
++import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
++import androidx.compose.foundation.lazy.grid.items
++import androidx.compose.foundation.lazy.items
++import androidx.compose.foundation.shape.RoundedCornerShape
++import androidx.compose.runtime.Composable
++import androidx.compose.runtime.LaunchedEffect
++import androidx.compose.runtime.collectAsState
++import androidx.compose.runtime.getValue
++import androidx.compose.ui.Alignment
++import androidx.compose.ui.Modifier
++import androidx.compose.ui.unit.dp
++import androidx.hilt.navigation.compose.hiltViewModel
++import androidx.tv.material3.Button
++import androidx.tv.material3.ButtonDefaults
++import androidx.tv.material3.ExperimentalTvMaterial3Api
++import androidx.tv.material3.MaterialTheme
++import androidx.tv.material3.Text
++import com.nuvio.tv.ui.components.ContentCard
++import com.nuvio.tv.ui.theme.NuvioTheme
++
++private const val KIDS_RATINGS_LINE = "Movies rated PG & PG-13 · Shows rated TV-Y, TV-Y7, TV-G & TV-PG"
++
++/**
++ * Forbidden Vid: on a kids profile, show [kidsContent]; otherwise [normalContent].
++ * Nothing is drawn until the saved profile is known, so grown-up rows never flash on screen.
++ */
++@Composable
++fun KidsGate(
++    kidsContent: @Composable () -> Unit,
++    normalContent: @Composable () -> Unit
++) {
++    val viewModel: KidsViewModel = hiltViewModel()
++    val isKids by viewModel.isKids.collectAsState()
++    when (isKids) {
++        null -> Box(Modifier.fillMaxSize().background(NuvioTheme.colors.Background))
++        true -> kidsContent()
++        false -> normalContent()
++    }
++}
++
++@Composable
++fun KidsHomeScreen(
++    onNavigateToDetail: (String, String) -> Unit,
++    viewModel: KidsViewModel = hiltViewModel()
++) {
++    LaunchedEffect(Unit) { viewModel.loadHome() }
++    val rows by viewModel.homeRows.collectAsState()
++
++    LazyColumn(
++        modifier = Modifier.fillMaxSize().background(NuvioTheme.colors.Background),
++        contentPadding = PaddingValues(start = 48.dp, top = 28.dp, bottom = 56.dp),
++        verticalArrangement = Arrangement.spacedBy(26.dp)
++    ) {
++        item(key = "header") { KidsHeader("Kids") }
++        if (!viewModel.hasRatingsSource) {
++            item(key = "nokey") { KidsMessage("Kids content needs a ratings source. Ask the app owner to add a TMDB key.") }
++        }
++        items(rows, key = { it.key }) { row ->
++            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
++                Text(
++                    text = row.title,
++                    style = MaterialTheme.typography.titleLarge,
++                    color = NuvioTheme.colors.TextPrimary
++                )
++                if (row.items.isEmpty()) {
++                    Text(
++                        text = if (row.loading) "Loading…" else "Nothing here yet",
++                        style = MaterialTheme.typography.bodyMedium,
++                        color = NuvioTheme.colors.TextSecondary
++                    )
++                } else {
++                    LazyRow(
++                        horizontalArrangement = Arrangement.spacedBy(16.dp),
++                        contentPadding = PaddingValues(end = 48.dp, top = 6.dp, bottom = 6.dp)
++                    ) {
++                        items(row.items, key = { it.id }) { item ->
++                            ContentCard(
++                                item = item,
++                                onClick = { onNavigateToDetail(item.id, item.rawType) }
++                            )
++                        }
++                    }
++                }
++            }
++        }
++    }
++}
++
++@Composable
++fun KidsBrowseScreen(
++    type: String,
++    title: String,
++    onNavigateToDetail: (String, String) -> Unit,
++    viewModel: KidsViewModel = hiltViewModel()
++) {
++    val genres = if (type == "movie") KidsViewModel.MOVIE_GENRES else KidsViewModel.TV_GENRES
++    val state by viewModel.browse.collectAsState()
++    LaunchedEffect(type) { viewModel.startBrowse(type, state.genre) }
++
++    LazyVerticalGrid(
++        columns = GridCells.Adaptive(minSize = 150.dp),
++        modifier = Modifier.fillMaxSize().background(NuvioTheme.colors.Background),
++        contentPadding = PaddingValues(start = 48.dp, end = 48.dp, top = 28.dp, bottom = 56.dp),
++        horizontalArrangement = Arrangement.spacedBy(16.dp),
++        verticalArrangement = Arrangement.spacedBy(20.dp)
++    ) {
++        item(span = { GridItemSpan(maxLineSpan) }, key = "header") { KidsHeader(title) }
++        item(span = { GridItemSpan(maxLineSpan) }, key = "genres") {
++            LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
++                items(genres, key = { it.label }) { genre ->
++                    val selected = genre.id == state.genre
++                    Button(
++                        onClick = { viewModel.startBrowse(type, genre.id) },
++                        colors = ButtonDefaults.colors(
++                            containerColor = if (selected) NuvioTheme.colors.Secondary else NuvioTheme.colors.BackgroundCard,
++                            contentColor = if (selected) NuvioTheme.colors.OnSecondary else NuvioTheme.colors.TextPrimary,
++                            focusedContainerColor = NuvioTheme.colors.SecondaryVariant,
++                            focusedContentColor = NuvioTheme.colors.OnSecondaryVariant
++                        ),
++                        shape = ButtonDefaults.shape(RoundedCornerShape(50))
++                    ) { Text(genre.label) }
++                }
++            }
++        }
++        if (!viewModel.hasRatingsSource) {
++            item(span = { GridItemSpan(maxLineSpan) }, key = "nokey") {
++                KidsMessage("Kids content needs a ratings source. Ask the app owner to add a TMDB key.")
++            }
++        }
++        items(state.items, key = { it.id }) { item ->
++            ContentCard(item = item, onClick = { onNavigateToDetail(item.id, item.rawType) })
++        }
++        item(span = { GridItemSpan(maxLineSpan) }, key = "more") {
++            Box(Modifier.fillMaxWidth().padding(top = 8.dp), contentAlignment = Alignment.Center) {
++                when {
++                    state.loading -> KidsMessage("Loading…")
++                    state.items.isEmpty() -> KidsMessage("Nothing here yet")
++                    state.canLoadMore -> Button(
++                        onClick = { viewModel.loadMore() },
++                        colors = ButtonDefaults.colors(
++                            containerColor = NuvioTheme.colors.BackgroundCard,
++                            contentColor = NuvioTheme.colors.TextPrimary,
++                            focusedContainerColor = NuvioTheme.colors.Secondary,
++                            focusedContentColor = NuvioTheme.colors.OnSecondary
++                        ),
++                        shape = ButtonDefaults.shape(RoundedCornerShape(50))
++                    ) { Text("Load more") }
++                }
++            }
++        }
++    }
++}
++
++@Composable
++private fun KidsHeader(title: String) {
++    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
++        Text(text = title, style = MaterialTheme.typography.headlineMedium, color = NuvioTheme.colors.TextPrimary)
++        Text(text = KIDS_RATINGS_LINE, style = MaterialTheme.typography.bodyMedium, color = NuvioTheme.colors.Secondary)
++    }
++}
++
++@Composable
++private fun KidsMessage(text: String) {
++    Row { Text(text = text, style = MaterialTheme.typography.bodyLarge, color = NuvioTheme.colors.TextSecondary) }
++}
+diff --git a/app/src/main/java/com/nuvio/tv/ui/screens/kids/KidsViewModel.kt b/app/src/main/java/com/nuvio/tv/ui/screens/kids/KidsViewModel.kt
+new file mode 100644
+index 000000000..b40e13e39
+--- /dev/null
++++ b/app/src/main/java/com/nuvio/tv/ui/screens/kids/KidsViewModel.kt
+@@ -0,0 +1,132 @@
++package com.nuvio.tv.ui.screens.kids
++
++import androidx.lifecycle.ViewModel
++import androidx.lifecycle.viewModelScope
++import com.nuvio.tv.core.kids.KidsCatalogService
++import com.nuvio.tv.core.kids.KidsProfileStore
++import com.nuvio.tv.domain.model.MetaPreview
++import dagger.hilt.android.lifecycle.HiltViewModel
++import kotlinx.coroutines.Job
++import kotlinx.coroutines.async
++import kotlinx.coroutines.awaitAll
++import kotlinx.coroutines.flow.MutableStateFlow
++import kotlinx.coroutines.flow.StateFlow
++import kotlinx.coroutines.flow.asStateFlow
++import kotlinx.coroutines.flow.update
++import kotlinx.coroutines.launch
++import javax.inject.Inject
++
++data class KidsRow(
++    val key: String,
++    val title: String,
++    val items: List<MetaPreview> = emptyList(),
++    val loading: Boolean = true
++)
++
++data class KidsGenre(val id: Int?, val label: String)
++
++data class KidsBrowseState(
++    val genre: Int? = null,
++    val items: List<MetaPreview> = emptyList(),
++    val loading: Boolean = false,
++    val page: Int = 0,
++    val canLoadMore: Boolean = true
++)
++
++@HiltViewModel
++class KidsViewModel @Inject constructor(
++    private val kidsProfileStore: KidsProfileStore,
++    private val service: KidsCatalogService
++) : ViewModel() {
++
++    /** null until the saved profile has been read. */
++    private val _isKids = MutableStateFlow<Boolean?>(null)
++    val isKids: StateFlow<Boolean?> = _isKids.asStateFlow()
++
++    val hasRatingsSource: Boolean get() = service.hasRatingsSource
++
++    private val _homeRows = MutableStateFlow<List<KidsRow>>(emptyList())
++    val homeRows: StateFlow<List<KidsRow>> = _homeRows.asStateFlow()
++
++    private val _browse = MutableStateFlow(KidsBrowseState())
++    val browse: StateFlow<KidsBrowseState> = _browse.asStateFlow()
++    private var browseJob: Job? = null
++    private var browseType: String = "movie"
++
++    init {
++        viewModelScope.launch {
++            _isKids.value = kidsProfileStore.isKidsProfileActiveNow()
++            kidsProfileStore.isKidsProfileActive.collect {
++                _isKids.value = kidsProfileStore.isKidsProfileActiveNow()
++            }
++        }
++    }
++
++    fun loadHome() {
++        if (_homeRows.value.isNotEmpty()) return
++        val defs = listOf(
++            Triple("m_pop", "Popular Kids Movies", "movie" to null),
++            Triple("m_anim", "Animated Movies", "movie" to 16),
++            Triple("m_family", "Family Movies", "movie" to 10751),
++            Triple("m_adv", "Adventure Movies", "movie" to 12),
++            Triple("t_kids", "Kids TV", "series" to 10762),
++            Triple("t_anim", "Animated Series", "series" to 16),
++            Triple("t_family", "Family TV", "series" to 10751),
++            Triple("m_comedy", "Comedy Movies", "movie" to 35)
++        )
++        _homeRows.value = defs.map { (key, title, _) -> KidsRow(key, title) }
++        defs.forEach { (key, _, spec) ->
++            viewModelScope.launch {
++                val (type, genre) = spec
++                val items = (1..2).map { page ->
++                    async { if (type == "movie") service.movies(genre, page) else service.tv(genre, page) }
++                }.awaitAll().flatten().distinctBy { it.id }
++                _homeRows.update { rows ->
++                    rows.map { if (it.key == key) it.copy(items = items, loading = false) else it }
++                        .filterNot { !it.loading && it.items.isEmpty() }
++                }
++            }
++        }
++    }
++
++    fun startBrowse(type: String, genre: Int?) {
++        if (browseType == type && _browse.value.genre == genre && _browse.value.page > 0) return
++        browseType = type
++        browseJob?.cancel()
++        _browse.value = KidsBrowseState(genre = genre)
++        loadMore()
++    }
++
++    fun loadMore() {
++        val state = _browse.value
++        if (state.loading || !state.canLoadMore) return
++        _browse.update { it.copy(loading = true) }
++        browseJob = viewModelScope.launch {
++            val first = state.page + 1
++            val pages = (first..first + 1).map { page ->
++                async { if (browseType == "movie") service.movies(state.genre, page) else service.tv(state.genre, page) }
++            }.awaitAll()
++            val newItems = pages.flatten()
++            _browse.update {
++                it.copy(
++                    items = (it.items + newItems).distinctBy { item -> item.id },
++                    loading = false,
++                    page = first + 1,
++                    canLoadMore = newItems.isNotEmpty() && first + 1 < 30
++                )
++            }
++        }
++    }
++
++    companion object {
++        val MOVIE_GENRES = listOf(
++            KidsGenre(null, "All"), KidsGenre(16, "Animation"), KidsGenre(10751, "Family"),
++            KidsGenre(12, "Adventure"), KidsGenre(35, "Comedy"), KidsGenre(14, "Fantasy"),
++            KidsGenre(10402, "Music"), KidsGenre(878, "Sci-Fi")
++        )
++        val TV_GENRES = listOf(
++            KidsGenre(null, "All"), KidsGenre(10762, "Kids"), KidsGenre(16, "Animation"),
++            KidsGenre(10751, "Family"), KidsGenre(35, "Comedy"), KidsGenre(10765, "Sci-Fi & Fantasy")
++        )
++    }
++}
 diff --git a/app/src/main/java/com/nuvio/tv/ui/screens/profile/ProfileSelectionScreen.kt b/app/src/main/java/com/nuvio/tv/ui/screens/profile/ProfileSelectionScreen.kt
 index 5993b786e..e19d48cfc 100644
 --- a/app/src/main/java/com/nuvio/tv/ui/screens/profile/ProfileSelectionScreen.kt
