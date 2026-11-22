@@ -418,7 +418,7 @@ index 349a4f389..0ec8682b4 100644
                                      ModernSidebarScaffold(
 diff --git a/app/src/main/java/com/nuvio/tv/core/kids/KidsCatalogService.kt b/app/src/main/java/com/nuvio/tv/core/kids/KidsCatalogService.kt
 new file mode 100644
-index 000000000..bcb2d13e5
+index 000000000..075afac55
 --- /dev/null
 +++ b/app/src/main/java/com/nuvio/tv/core/kids/KidsCatalogService.kt
 @@ -0,0 +1,133 @@
@@ -445,7 +445,7 @@ index 000000000..bcb2d13e5
 +
 +/**
 + * Forbidden Vid kids-only catalogs, built straight from TMDB:
-+ * movies rated PG / PG-13 and shows rated TV-Y / TV-Y7 / TV-G / TV-PG (US ratings).
++ * movies rated PG and shows rated TV-Y / TV-Y7 / TV-G / TV-PG (US ratings).
 + * Every title's rating is checked again before it is shown.
 + */
 +@Singleton
@@ -557,7 +557,7 @@ index 000000000..bcb2d13e5
 +}
 diff --git a/app/src/main/java/com/nuvio/tv/core/kids/KidsContentFilter.kt b/app/src/main/java/com/nuvio/tv/core/kids/KidsContentFilter.kt
 new file mode 100644
-index 000000000..826a08d68
+index 000000000..cad4d5ca0
 --- /dev/null
 +++ b/app/src/main/java/com/nuvio/tv/core/kids/KidsContentFilter.kt
 @@ -0,0 +1,126 @@
@@ -579,7 +579,7 @@ index 000000000..826a08d68
 +import javax.inject.Singleton
 +
 +/**
-+ * Forbidden Vid kids filter. On a kids profile only movies rated PG / PG-13
++ * Forbidden Vid kids filter. On a kids profile only movies rated PG
 + * and shows rated TV-Y, TV-Y7, TV-G or TV-PG are shown. Ratings come from the addon's
 + * own age rating when present, otherwise from TMDB (US certification).
 + * Anything that can't be rated is hidden.
@@ -670,8 +670,8 @@ index 000000000..826a08d68
 +    }
 +
 +    companion object {
-+        // Movies: PG and PG-13. TV: TV-Y, TV-Y7, TV-G, TV-PG.
-+        val ALLOWED = setOf("PG", "PG-13", "TV-Y", "TV-Y7", "TV-Y7-FV", "TV-G", "TV-PG")
++        // Movies: PG. TV: TV-Y, TV-Y7, TV-G, TV-PG.
++        val ALLOWED = setOf("PG", "TV-Y", "TV-Y7", "TV-Y7-FV", "TV-G", "TV-PG")
 +
 +        fun normalize(raw: String): String {
 +            val r = raw.trim().uppercase().replace(" ", "").replace("_", "-")
@@ -833,7 +833,7 @@ index 1d0da5b7e..d82e26a76 100644
              listOf(defaultPrimaryProfile())
          }
 diff --git a/app/src/main/java/com/nuvio/tv/data/remote/api/TmdbApi.kt b/app/src/main/java/com/nuvio/tv/data/remote/api/TmdbApi.kt
-index 2248fd9f9..1da389c00 100644
+index 2248fd9f9..67aae71d8 100644
 --- a/app/src/main/java/com/nuvio/tv/data/remote/api/TmdbApi.kt
 +++ b/app/src/main/java/com/nuvio/tv/data/remote/api/TmdbApi.kt
 @@ -160,6 +160,34 @@ interface TmdbApi {
@@ -845,7 +845,7 @@ index 2248fd9f9..1da389c00 100644
 +    suspend fun discoverKidsMovies(
 +        @Query("api_key") apiKey: String,
 +        @Query("certification_country") certificationCountry: String = "US",
-+        @Query("certification") certification: String = "PG|PG-13",
++        @Query("certification") certification: String = "PG",
 +        @Query("include_adult") includeAdult: Boolean = false,
 +        @Query("sort_by") sortBy: String = "popularity.desc",
 +        @Query("vote_count.gte") voteCountGte: Int = 50,
@@ -1220,7 +1220,7 @@ index f2ca5dec4..cf2e1820f 100644
              }
 diff --git a/app/src/main/java/com/nuvio/tv/ui/screens/kids/KidsScreens.kt b/app/src/main/java/com/nuvio/tv/ui/screens/kids/KidsScreens.kt
 new file mode 100644
-index 000000000..bec287849
+index 000000000..664afc258
 --- /dev/null
 +++ b/app/src/main/java/com/nuvio/tv/ui/screens/kids/KidsScreens.kt
 @@ -0,0 +1,191 @@
@@ -1261,7 +1261,7 @@ index 000000000..bec287849
 +import com.nuvio.tv.ui.components.ContentCard
 +import com.nuvio.tv.ui.theme.NuvioTheme
 +
-+private const val KIDS_RATINGS_LINE = "Movies rated PG & PG-13 · Shows rated TV-Y, TV-Y7, TV-G & TV-PG"
++private const val KIDS_RATINGS_LINE = "Movies rated PG · Shows rated TV-Y, TV-Y7, TV-G & TV-PG"
 +
 +/**
 + * Forbidden Vid: on a kids profile, show [kidsContent]; otherwise [normalContent].
@@ -76189,7 +76189,7 @@ index 2a60888c5..0bb53b24b 100644
      <string name="type_movie">電影</string>
      <string name="type_movies">電影</string>
 diff --git a/app/src/main/res/values/strings.xml b/app/src/main/res/values/strings.xml
-index cc39cbce6..98a392711 100644
+index cc39cbce6..419e1bddf 100644
 --- a/app/src/main/res/values/strings.xml
 +++ b/app/src/main/res/values/strings.xml
 @@ -1,5 +1,5 @@
@@ -76206,7 +76206,7 @@ index cc39cbce6..98a392711 100644
 +    <string name="fv_nav_movies" translatable="false">Movies</string>
 +    <string name="fv_nav_tv_series" translatable="false">TV Series</string>
 +    <string name="fv_kids_profile" translatable="false">Kids profile</string>
-+    <string name="fv_kids_profile_subtitle" translatable="false">Movies rated PG or PG-13, and shows rated TV-Y, TV-Y7, TV-G or TV-PG. Unrated titles are hidden.</string>
++    <string name="fv_kids_profile_subtitle" translatable="false">Movies rated PG, and shows rated TV-Y, TV-Y7, TV-G or TV-PG. Unrated titles are hidden.</string>
 +    <string name="fv_kids_badge" translatable="false">Kids</string>
 +    <string name="fv_kids_blocked" translatable="false">This title isn\'t available on a kids profile.</string>
  </resources>
