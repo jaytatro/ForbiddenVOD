@@ -890,6 +890,30 @@ index 8490d68e4..554427149 100644
                  Log.d(
                      TAG,
                      "Catalog fetch success addonId=$addonId type=$type catalogId=$catalogId items=${items.size}"
+diff --git a/app/src/main/java/com/nuvio/tv/data/repository/StreamRepositoryImpl.kt b/app/src/main/java/com/nuvio/tv/data/repository/StreamRepositoryImpl.kt
+index 16724e45b..dc6586841 100644
+--- a/app/src/main/java/com/nuvio/tv/data/repository/StreamRepositoryImpl.kt
++++ b/app/src/main/java/com/nuvio/tv/data/repository/StreamRepositoryImpl.kt
+@@ -711,7 +711,10 @@ class StreamRepositoryImpl @Inject constructor(
+             is NetworkResult.Success -> {
+                 val streams = result.data.streams?.map { 
+                     it.toDomain(addonName, addonLogo) 
+-                } ?: emptyList()
++                }
++                    // Forbidden Vid: hide peer-to-peer (torrent) streams; only direct/debrid links are shown.
++                    ?.filterNot { it.isTorrent() }
++                    ?: emptyList()
+                 Log.d(TAG, "Streams success addon=$addonName count=${streams.size} url=$streamUrl")
+                 NetworkResult.Success(streams)
+             }
+@@ -776,6 +779,7 @@ class StreamRepositoryImpl @Inject constructor(
+                     val matchingVideo = metaDto.videos?.firstOrNull { it.id == videoId }
+                     val streams = matchingVideo?.streams
+                         ?.mapNotNull { it.toDomain(addon.displayName, addon.logo) }
++                        ?.filterNot { it.isTorrent() }
+                         ?: emptyList()
+                     Log.d(TAG, "Inline streams from meta: addon=${addon.displayName} videoId=$videoId found=${streams.size}")
+                     streams
 diff --git a/app/src/main/java/com/nuvio/tv/ui/navigation/NuvioNavHost.kt b/app/src/main/java/com/nuvio/tv/ui/navigation/NuvioNavHost.kt
 index cf44453c3..e26a41e7a 100644
 --- a/app/src/main/java/com/nuvio/tv/ui/navigation/NuvioNavHost.kt
