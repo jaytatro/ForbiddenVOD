@@ -1,8 +1,8 @@
 diff --git a/app/build.gradle.kts b/app/build.gradle.kts
-index bc5add087..59d2c1dc3 100644
+index bc5add087..dc035691e 100644
 --- a/app/build.gradle.kts
 +++ b/app/build.gradle.kts
-@@ -131,7 +131,7 @@ android {
+@@ -131,12 +131,14 @@ android {
      ndkVersion = "29.0.14206865"
  
      defaultConfig {
@@ -11,15 +11,158 @@ index bc5add087..59d2c1dc3 100644
          testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
          minSdk = 24
          targetSdk = 36
-@@ -186,7 +186,7 @@ android {
-         create("full") {
-             dimension = "distribution"
-             buildConfigField("boolean", "FEATURE_PLUGINS_ENABLED", "true")
--            buildConfigField("boolean", "FEATURE_IN_APP_UPDATES_ENABLED", "true")
-+            buildConfigField("boolean", "FEATURE_IN_APP_UPDATES_ENABLED", "false")
-             buildConfigField("boolean", "FEATURE_IN_APP_TRAILERS_ENABLED", "true")
-             buildConfigField("boolean", "FEATURE_EXTERNAL_TRAILERS_ENABLED", "true")
-             buildConfigField("boolean", "FEATURE_EXTERNAL_PLAYBACK_KEEP_ALIVE_ENABLED", "true")
+-        versionCode = 1081
+-        versionName = "1.1.1"
++        // Forbidden Vid: GitHub Actions passes its build number so each release is a newer version.
++        val fvBuild = System.getenv("FV_BUILD")?.toIntOrNull()
++        versionCode = if (fvBuild != null) 200000 + fvBuild else 1081
++        versionName = if (fvBuild != null) "1.2.$fvBuild" else "1.1.1"
+ 
+         buildConfigField("String", "PARENTAL_GUIDE_API_URL", "\"${localProperties.getProperty("PARENTAL_GUIDE_API_URL", "")}\"")
+         buildConfigField("String", "INTRODB_API_URL", "\"${localProperties.getProperty("INTRODB_API_URL", "")}\"")
+@@ -177,8 +179,8 @@ android {
+         buildConfigField("String", "SENTRY_DSN", buildConfigString(sentryDsn))
+ 
+         // In-app updater (GitHub Releases)
+-        buildConfigField("String", "GITHUB_OWNER", "\"NuvioMedia\"")
+-        buildConfigField("String", "GITHUB_REPO", "\"NuvioTV\"")
++        buildConfigField("String", "GITHUB_OWNER", "\"jaytatro\"")
++        buildConfigField("String", "GITHUB_REPO", "\"ForbiddenVOD\"")
+     }
+ 
+     flavorDimensions += "distribution"
+diff --git a/app/src/full/java/com/nuvio/tv/updater/ui/UpdateBannerHost.kt b/app/src/full/java/com/nuvio/tv/updater/ui/UpdateBannerHost.kt
+index 76c43e2c1..fabe327c8 100644
+--- a/app/src/full/java/com/nuvio/tv/updater/ui/UpdateBannerHost.kt
++++ b/app/src/full/java/com/nuvio/tv/updater/ui/UpdateBannerHost.kt
+@@ -63,7 +63,37 @@ fun UpdateBannerHost(
+ 
+     // A newer release takes the banner; otherwise it can report the release that was just installed automatically.
+     val update = state.update ?: state.installedUpdate
+-    val showBanner = state.showBanner && update != null
++    // Forbidden Vid: a newer release is shown as a pop-up instead of the top banner.
++    val showPopup = state.showBanner && state.update != null
++    val showBanner = state.showBanner && update != null && !showPopup
++    var installRequestedForTag by remember { mutableStateOf<String?>(null) }
++
++    // After "Update now" finishes downloading, start the install straight away.
++    LaunchedEffect(state.downloadedApkPath, installRequestedForTag) {
++        val tag = installRequestedForTag
++        if (tag != null && tag == state.update?.tag && state.downloadedApkPath != null) {
++            installRequestedForTag = null
++            onInstall()
++        }
++    }
++
++    if (showPopup) {
++        val pending = state.update
++        if (pending != null) {
++            UpdateAvailablePopup(
++                update = pending,
++                isDownloading = state.isDownloading,
++                downloadProgress = state.downloadProgress,
++                isDownloaded = state.downloadedApkPath != null,
++                onUpdateNow = {
++                    installRequestedForTag = pending.tag
++                    onDownload()
++                },
++                onInstall = onInstall,
++                onLater = onDismissBanner
++            )
++        }
++    }
+ 
+     Column(modifier = Modifier.fillMaxSize()) {
+         AnimatedVisibility(
+diff --git a/app/src/full/java/com/nuvio/tv/updater/ui/UpdateDialogs.kt b/app/src/full/java/com/nuvio/tv/updater/ui/UpdateDialogs.kt
+index 52b648362..0d7b5ba07 100644
+--- a/app/src/full/java/com/nuvio/tv/updater/ui/UpdateDialogs.kt
++++ b/app/src/full/java/com/nuvio/tv/updater/ui/UpdateDialogs.kt
+@@ -191,3 +191,84 @@ internal fun UpdateUnknownSourcesDialog(
+         }
+     }
+ }
++
++/** Forbidden Vid: pop-up shown when a newer build is published. */
++@Composable
++internal fun UpdateAvailablePopup(
++    update: AppUpdate,
++    isDownloading: Boolean,
++    downloadProgress: Float?,
++    isDownloaded: Boolean,
++    onUpdateNow: () -> Unit,
++    onInstall: () -> Unit,
++    onLater: () -> Unit
++) {
++    val primaryFocusRequester = remember { FocusRequester() }
++
++    LaunchedEffect(update.tag) {
++        primaryFocusRequester.requestFocusAfterFrames()
++    }
++
++    NuvioDialog(
++        onDismiss = onLater,
++        title = "Update available",
++        subtitle = "A new version of Forbidden Vid is ready: ${update.title}",
++        width = 600.dp,
++        suppressFirstKeyUp = false
++    ) {
++        if (update.notes.isNotBlank()) {
++            Text(
++                text = update.notes.lineSequence()
++                    .map { it.trim().trimStart('#', '*', '-', ' ') }
++                    .filter { it.isNotBlank() }
++                    .take(6)
++                    .joinToString("\n"),
++                style = MaterialTheme.typography.bodyMedium,
++                color = NuvioTheme.colors.TextSecondary,
++                modifier = Modifier.padding(bottom = NuvioTheme.spacing.md)
++            )
++        }
++        Row(
++            modifier = Modifier.fillMaxWidth(),
++            horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.md)
++        ) {
++            Button(
++                onClick = {
++                    when {
++                        isDownloaded -> onInstall()
++                        !isDownloading -> onUpdateNow()
++                    }
++                },
++                modifier = Modifier.focusRequester(primaryFocusRequester),
++                colors = ButtonDefaults.colors(
++                    containerColor = NuvioTheme.colors.Secondary,
++                    focusedContainerColor = NuvioTheme.colors.SecondaryVariant,
++                    contentColor = NuvioTheme.colors.OnSecondary,
++                    focusedContentColor = NuvioTheme.colors.OnSecondaryVariant
++                ),
++                shape = ButtonDefaults.shape(RoundedCornerShape(50))
++            ) {
++                Text(
++                    when {
++                        isDownloaded -> "Install now"
++                        isDownloading -> downloadProgress?.let { "Downloading… ${(it * 100).toInt()}%" } ?: "Downloading…"
++                        else -> "Update now"
++                    }
++                )
++            }
++
++            Button(
++                onClick = onLater,
++                colors = ButtonDefaults.colors(
++                    containerColor = NuvioTheme.colors.BackgroundCard,
++                    focusedContainerColor = NuvioTheme.colors.FocusBackground,
++                    contentColor = NuvioTheme.colors.TextPrimary,
++                    focusedContentColor = NuvioTheme.colors.Primary
++                ),
++                shape = ButtonDefaults.shape(RoundedCornerShape(50))
++            ) {
++                Text("Later")
++            }
++        }
++    }
++}
 diff --git a/app/src/main/java/com/nuvio/tv/MainActivity.kt b/app/src/main/java/com/nuvio/tv/MainActivity.kt
 index 349a4f389..587b1ed5e 100644
 --- a/app/src/main/java/com/nuvio/tv/MainActivity.kt
