@@ -418,10 +418,10 @@ index 349a4f389..0ec8682b4 100644
                                      ModernSidebarScaffold(
 diff --git a/app/src/main/java/com/nuvio/tv/core/kids/KidsCatalogService.kt b/app/src/main/java/com/nuvio/tv/core/kids/KidsCatalogService.kt
 new file mode 100644
-index 000000000..075afac55
+index 000000000..f1a7007c3
 --- /dev/null
 +++ b/app/src/main/java/com/nuvio/tv/core/kids/KidsCatalogService.kt
-@@ -0,0 +1,133 @@
+@@ -0,0 +1,151 @@
 +package com.nuvio.tv.core.kids
 +
 +import android.content.Context
@@ -445,7 +445,7 @@ index 000000000..075afac55
 +
 +/**
 + * Forbidden Vid kids-only catalogs, built straight from TMDB:
-+ * movies rated PG and shows rated TV-Y / TV-Y7 / TV-G / TV-PG (US ratings).
++ * movies rated PG / PG-13 and shows rated TV-Y / TV-Y7 / TV-G / TV-PG (US ratings).
 + * Every title's rating is checked again before it is shown.
 + */
 +@Singleton
@@ -457,6 +457,11 @@ index 000000000..075afac55
 +    private val prefs = context.getSharedPreferences("fv_kids_catalog", Context.MODE_PRIVATE)
 +    private val memory = ConcurrentHashMap<String, String>()
 +    private val permits = Semaphore(12)
++
++    companion object {
++        private const val HORROR_GENRE = 27
++        private val HORROR_WORDS = listOf("horror", "slasher", "zombie", "gore", "haunting", "demon", "possession")
++    }
 +
 +    val hasRatingsSource: Boolean get() = BuildConfig.TMDB_API_KEY.isNotBlank()
 +
@@ -482,8 +487,10 @@ index 000000000..075afac55
 +                async {
 +                    permits.withPermit {
 +                        try {
++                            if (!isTv && result.genreIds.orEmpty().contains(HORROR_GENRE)) return@withPermit null
 +                            val rating = usRating(result.id, isTv, key) ?: return@withPermit null
 +                            if (rating !in KidsContentFilter.ALLOWED) return@withPermit null
++                            if (isHorror(result.id, isTv, key)) return@withPermit null
 +                            val imdb = imdbId(result.id, isTv, key)
 +                            toPreview(result, isTv, imdb, rating)
 +                        } catch (e: CancellationException) {
@@ -512,6 +519,17 @@ index 000000000..075afac55
 +        }?.let(KidsContentFilter::normalize).orEmpty()
 +        store(cacheKey, rating)
 +        return rating.ifEmpty { null }
++    }
++
++    /** True when TMDB tags the title as horror (TV has no horror genre, so keywords are checked). */
++    private suspend fun isHorror(tmdbId: Int, isTv: Boolean, key: String): Boolean {
++        val cacheKey = (if (isTv) "tvh:" else "mvh:") + tmdbId
++        cached(cacheKey)?.let { return it == "1" }
++        val body = (if (isTv) tmdbApi.getTvKeywordsFv(tmdbId, key) else tmdbApi.getMovieKeywordsFv(tmdbId, key)).body()
++        val names = (body?.keywords.orEmpty() + body?.results.orEmpty()).mapNotNull { it.name?.lowercase() }
++        val horror = names.any { name -> HORROR_WORDS.any { word -> name.contains(word) } }
++        store(cacheKey, if (horror) "1" else "0")
++        return horror
 +    }
 +
 +    private suspend fun imdbId(tmdbId: Int, isTv: Boolean, key: String): String? {
@@ -557,10 +575,10 @@ index 000000000..075afac55
 +}
 diff --git a/app/src/main/java/com/nuvio/tv/core/kids/KidsContentFilter.kt b/app/src/main/java/com/nuvio/tv/core/kids/KidsContentFilter.kt
 new file mode 100644
-index 000000000..cad4d5ca0
+index 000000000..4249c83c8
 --- /dev/null
 +++ b/app/src/main/java/com/nuvio/tv/core/kids/KidsContentFilter.kt
-@@ -0,0 +1,126 @@
+@@ -0,0 +1,132 @@
 +package com.nuvio.tv.core.kids
 +
 +import android.util.Log
@@ -579,7 +597,7 @@ index 000000000..cad4d5ca0
 +import javax.inject.Singleton
 +
 +/**
-+ * Forbidden Vid kids filter. On a kids profile only movies rated PG
++ * Forbidden Vid kids filter. On a kids profile only movies rated PG / PG-13
 + * and shows rated TV-Y, TV-Y7, TV-G or TV-PG are shown. Ratings come from the addon's
 + * own age rating when present, otherwise from TMDB (US certification).
 + * Anything that can't be rated is hidden.
@@ -601,7 +619,9 @@ index 000000000..cad4d5ca0
 +        if (items.isEmpty() || !isActive()) return items
 +        return coroutineScope {
 +            items.map { item ->
-+                async { if (isRatingAllowed(item.id, item.rawType, item.ageRating, item.imdbId)) item else null }
++                async {
++                    if (!isHorror(item.genres) && isRatingAllowed(item.id, item.rawType, item.ageRating, item.imdbId)) item else null
++                }
 +            }.awaitAll().filterNotNull()
 +        }
 +    }
@@ -670,8 +690,12 @@ index 000000000..cad4d5ca0
 +    }
 +
 +    companion object {
-+        // Movies: PG. TV: TV-Y, TV-Y7, TV-G, TV-PG.
-+        val ALLOWED = setOf("PG", "TV-Y", "TV-Y7", "TV-Y7-FV", "TV-G", "TV-PG")
++        /** No horror on kids profiles, whatever the rating. */
++        fun isHorror(genres: List<String>?): Boolean =
++            genres.orEmpty().any { it.contains("horror", ignoreCase = true) }
++
++        // Movies: PG and PG-13. TV: TV-Y, TV-Y7, TV-G, TV-PG.
++        val ALLOWED = setOf("PG", "PG-13", "TV-Y", "TV-Y7", "TV-Y7-FV", "TV-G", "TV-PG")
 +
 +        fun normalize(raw: String): String {
 +            val r = raw.trim().uppercase().replace(" ", "").replace("_", "-")
@@ -833,10 +857,10 @@ index 1d0da5b7e..d82e26a76 100644
              listOf(defaultPrimaryProfile())
          }
 diff --git a/app/src/main/java/com/nuvio/tv/data/remote/api/TmdbApi.kt b/app/src/main/java/com/nuvio/tv/data/remote/api/TmdbApi.kt
-index 2248fd9f9..67aae71d8 100644
+index 2248fd9f9..2c4653fdc 100644
 --- a/app/src/main/java/com/nuvio/tv/data/remote/api/TmdbApi.kt
 +++ b/app/src/main/java/com/nuvio/tv/data/remote/api/TmdbApi.kt
-@@ -160,6 +160,34 @@ interface TmdbApi {
+@@ -160,6 +160,48 @@ interface TmdbApi {
          @Query("api_key") apiKey: String
      ): Response<TmdbNetworkDetailsResponse>
  
@@ -845,14 +869,28 @@ index 2248fd9f9..67aae71d8 100644
 +    suspend fun discoverKidsMovies(
 +        @Query("api_key") apiKey: String,
 +        @Query("certification_country") certificationCountry: String = "US",
-+        @Query("certification") certification: String = "PG",
++        @Query("certification") certification: String = "PG|PG-13",
 +        @Query("include_adult") includeAdult: Boolean = false,
++        @Query("without_genres") withoutGenres: String = "27",
 +        @Query("sort_by") sortBy: String = "popularity.desc",
 +        @Query("vote_count.gte") voteCountGte: Int = 50,
 +        @Query("with_genres") withGenres: String? = null,
 +        @Query("language") language: String = "en-US",
 +        @Query("page") page: Int = 1
 +    ): Response<TmdbDiscoverResponse>
++
++    /** Forbidden Vid: keywords, used to keep horror off kids profiles. */
++    @GET("movie/{movie_id}/keywords")
++    suspend fun getMovieKeywordsFv(
++        @Path("movie_id") movieId: Int,
++        @Query("api_key") apiKey: String
++    ): Response<FvKeywordsResponse>
++
++    @GET("tv/{tv_id}/keywords")
++    suspend fun getTvKeywordsFv(
++        @Path("tv_id") tvId: Int,
++        @Query("api_key") apiKey: String
++    ): Response<FvKeywordsResponse>
 +
 +    /** Forbidden Vid kids catalogs: TV limited by US content rating. */
 +    @GET("discover/tv")
@@ -871,6 +909,30 @@ index 2248fd9f9..67aae71d8 100644
      @GET("discover/movie")
      suspend fun discoverMovies(
          @Query("api_key") apiKey: String,
+@@ -609,6 +651,7 @@ data class TmdbKeywordSearchResult(
+ @JsonClass(generateAdapter = true)
+ data class TmdbDiscoverResult(
+     @Json(name = "id") val id: Int,
++    @Json(name = "genre_ids") val genreIds: List<Int>? = null,
+     @Json(name = "title") val title: String? = null,
+     @Json(name = "name") val name: String? = null,
+     @Json(name = "original_title") val originalTitle: String? = null,
+@@ -753,3 +796,15 @@ data class TmdbNetworkDetailsResponse(
+     @Json(name = "logo_path") val logoPath: String? = null,
+     @Json(name = "origin_country") val originCountry: String? = null
+ )
++
++@JsonClass(generateAdapter = true)
++data class FvKeywordsResponse(
++    @Json(name = "keywords") val keywords: List<FvKeyword>? = null,
++    @Json(name = "results") val results: List<FvKeyword>? = null
++)
++
++@JsonClass(generateAdapter = true)
++data class FvKeyword(
++    @Json(name = "id") val id: Int? = null,
++    @Json(name = "name") val name: String? = null
++)
 diff --git a/app/src/main/java/com/nuvio/tv/data/repository/CatalogRepositoryImpl.kt b/app/src/main/java/com/nuvio/tv/data/repository/CatalogRepositoryImpl.kt
 index 8490d68e4..554427149 100644
 --- a/app/src/main/java/com/nuvio/tv/data/repository/CatalogRepositoryImpl.kt
@@ -1145,7 +1207,7 @@ index 80512ff00..f81e84d3b 100644
              1f to Color.Black
          ),
 diff --git a/app/src/main/java/com/nuvio/tv/ui/screens/detail/MetaDetailsViewModel.kt b/app/src/main/java/com/nuvio/tv/ui/screens/detail/MetaDetailsViewModel.kt
-index 549a10ec6..1771b9064 100644
+index 549a10ec6..1a63374c6 100644
 --- a/app/src/main/java/com/nuvio/tv/ui/screens/detail/MetaDetailsViewModel.kt
 +++ b/app/src/main/java/com/nuvio/tv/ui/screens/detail/MetaDetailsViewModel.kt
 @@ -1,5 +1,7 @@
@@ -1164,7 +1226,7 @@ index 549a10ec6..1771b9064 100644
      private val metaRepository: MetaRepository,
      private val tmdbSettingsDataStore: TmdbSettingsDataStore,
      private val tmdbService: TmdbService,
-@@ -173,6 +176,24 @@ class MetaDetailsViewModel @Inject constructor(
+@@ -173,6 +176,28 @@ class MetaDetailsViewModel @Inject constructor(
      private val _optimisticUnmarks = mutableSetOf<Pair<Int, Int>>()
  
      init {
@@ -1175,7 +1237,11 @@ index 549a10ec6..1771b9064 100644
 +                .filterNotNull()
 +                .distinctUntilChangedBy { it.id }
 +                .collect { meta ->
-+                    if (!kidsContentFilter.isAllowed(meta.id, meta.rawType, meta.ageRating, meta.imdbId)) {
++                    val blocked = kidsContentFilter.isActive() && (
++                        com.nuvio.tv.core.kids.KidsContentFilter.isHorror(meta.genres) ||
++                            !kidsContentFilter.isAllowed(meta.id, meta.rawType, meta.ageRating, meta.imdbId)
++                        )
++                    if (blocked) {
 +                        _uiState.update {
 +                            it.copy(
 +                                isLoading = false,
@@ -1220,7 +1286,7 @@ index f2ca5dec4..cf2e1820f 100644
              }
 diff --git a/app/src/main/java/com/nuvio/tv/ui/screens/kids/KidsScreens.kt b/app/src/main/java/com/nuvio/tv/ui/screens/kids/KidsScreens.kt
 new file mode 100644
-index 000000000..664afc258
+index 000000000..bec287849
 --- /dev/null
 +++ b/app/src/main/java/com/nuvio/tv/ui/screens/kids/KidsScreens.kt
 @@ -0,0 +1,191 @@
@@ -1261,7 +1327,7 @@ index 000000000..664afc258
 +import com.nuvio.tv.ui.components.ContentCard
 +import com.nuvio.tv.ui.theme.NuvioTheme
 +
-+private const val KIDS_RATINGS_LINE = "Movies rated PG · Shows rated TV-Y, TV-Y7, TV-G & TV-PG"
++private const val KIDS_RATINGS_LINE = "Movies rated PG & PG-13 · Shows rated TV-Y, TV-Y7, TV-G & TV-PG"
 +
 +/**
 + * Forbidden Vid: on a kids profile, show [kidsContent]; otherwise [normalContent].
@@ -76189,7 +76255,7 @@ index 2a60888c5..0bb53b24b 100644
      <string name="type_movie">電影</string>
      <string name="type_movies">電影</string>
 diff --git a/app/src/main/res/values/strings.xml b/app/src/main/res/values/strings.xml
-index cc39cbce6..419e1bddf 100644
+index cc39cbce6..98a392711 100644
 --- a/app/src/main/res/values/strings.xml
 +++ b/app/src/main/res/values/strings.xml
 @@ -1,5 +1,5 @@
@@ -76206,7 +76272,7 @@ index cc39cbce6..419e1bddf 100644
 +    <string name="fv_nav_movies" translatable="false">Movies</string>
 +    <string name="fv_nav_tv_series" translatable="false">TV Series</string>
 +    <string name="fv_kids_profile" translatable="false">Kids profile</string>
-+    <string name="fv_kids_profile_subtitle" translatable="false">Movies rated PG, and shows rated TV-Y, TV-Y7, TV-G or TV-PG. Unrated titles are hidden.</string>
++    <string name="fv_kids_profile_subtitle" translatable="false">Movies rated PG or PG-13, and shows rated TV-Y, TV-Y7, TV-G or TV-PG. Unrated titles are hidden.</string>
 +    <string name="fv_kids_badge" translatable="false">Kids</string>
 +    <string name="fv_kids_blocked" translatable="false">This title isn\'t available on a kids profile.</string>
  </resources>
