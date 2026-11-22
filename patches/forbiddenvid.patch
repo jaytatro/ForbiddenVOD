@@ -116,11 +116,52 @@ index 000000000..be7108ad5
 +        }
 +    }
 +}
+diff --git a/app/src/full/java/com/nuvio/tv/updater/UpdateViewModel.kt b/app/src/full/java/com/nuvio/tv/updater/UpdateViewModel.kt
+index 0ebe90910..ffa88469a 100644
+--- a/app/src/full/java/com/nuvio/tv/updater/UpdateViewModel.kt
++++ b/app/src/full/java/com/nuvio/tv/updater/UpdateViewModel.kt
+@@ -249,6 +249,36 @@ class UpdateViewModel @Inject constructor(
+         }
+     }
+ 
++    /** Forbidden Vid: download the newest release and install it, even if this version looks current. */
++    fun reinstallLatest() {
++        if (_uiState.value.isDownloading) return
++        updateCheckJob?.cancel()
++        updateCheckJob = viewModelScope.launch {
++            _uiState.update { it.copy(isChecking = true, feedbackMessage = null, errorMessage = null) }
++            updateRepository.getLatestUpdate(_uiState.value.updateChannel)
++                .onSuccess { latest ->
++                    _uiState.update {
++                        it.copy(
++                            isChecking = false,
++                            update = latest,
++                            isUpdateAvailable = true,
++                            downloadedApkPath = null,
++                            showBanner = true
++                        )
++                    }
++                    downloadUpdate()
++                }
++                .onFailure { error ->
++                    _uiState.update {
++                        it.copy(
++                            isChecking = false,
++                            feedbackMessage = error.message ?: context.getString(R.string.update_error_check_failed)
++                        )
++                    }
++                }
++        }
++    }
++
+     fun downloadUpdate() {
+         val update = _uiState.value.update ?: return
+ 
 diff --git a/app/src/full/java/com/nuvio/tv/updater/ui/UpdateBannerHost.kt b/app/src/full/java/com/nuvio/tv/updater/ui/UpdateBannerHost.kt
-index 76c43e2c1..fabe327c8 100644
+index 76c43e2c1..fb404f88a 100644
 --- a/app/src/full/java/com/nuvio/tv/updater/ui/UpdateBannerHost.kt
 +++ b/app/src/full/java/com/nuvio/tv/updater/ui/UpdateBannerHost.kt
-@@ -63,7 +63,37 @@ fun UpdateBannerHost(
+@@ -63,7 +63,24 @@ fun UpdateBannerHost(
  
      // A newer release takes the banner; otherwise it can report the release that was just installed automatically.
      val update = state.update ?: state.installedUpdate
@@ -128,17 +169,6 @@ index 76c43e2c1..fabe327c8 100644
 +    // Forbidden Vid: a newer release is shown as a pop-up instead of the top banner.
 +    val showPopup = state.showBanner && state.update != null
 +    val showBanner = state.showBanner && update != null && !showPopup
-+    var installRequestedForTag by remember { mutableStateOf<String?>(null) }
-+
-+    // After "Update now" finishes downloading, start the install straight away.
-+    LaunchedEffect(state.downloadedApkPath, installRequestedForTag) {
-+        val tag = installRequestedForTag
-+        if (tag != null && tag == state.update?.tag && state.downloadedApkPath != null) {
-+            installRequestedForTag = null
-+            onInstall()
-+        }
-+    }
-+
 +    if (showPopup) {
 +        val pending = state.update
 +        if (pending != null) {
@@ -147,10 +177,8 @@ index 76c43e2c1..fabe327c8 100644
 +                isDownloading = state.isDownloading,
 +                downloadProgress = state.downloadProgress,
 +                isDownloaded = state.downloadedApkPath != null,
-+                onUpdateNow = {
-+                    installRequestedForTag = pending.tag
-+                    onDownload()
-+                },
++                // Downloading installs automatically when it finishes (see UpdateViewModel.downloadUpdate).
++                onUpdateNow = onDownload,
 +                onInstall = onInstall,
 +                onLater = onDismissBanner
 +            )
@@ -1155,10 +1183,10 @@ index aba7ae79b..bfedfe53f 100644
                  selectedValue = uiState.selectedDiscoverCatalogKey,
 diff --git a/app/src/main/java/com/nuvio/tv/ui/screens/settings/ForbiddenUpdatesSettingsContent.kt b/app/src/main/java/com/nuvio/tv/ui/screens/settings/ForbiddenUpdatesSettingsContent.kt
 new file mode 100644
-index 000000000..7a67509a9
+index 000000000..717422cba
 --- /dev/null
 +++ b/app/src/main/java/com/nuvio/tv/ui/screens/settings/ForbiddenUpdatesSettingsContent.kt
-@@ -0,0 +1,62 @@
+@@ -0,0 +1,72 @@
 +@file:OptIn(ExperimentalTvMaterial3Api::class)
 +
 +package com.nuvio.tv.ui.screens.settings
@@ -1217,6 +1245,16 @@ index 000000000..7a67509a9
 +                } else {
 +                    Modifier
 +                }
++            )
++            SettingsActionRow(
++                title = when {
++                    state.isDownloading -> state.downloadProgress?.let { "Downloading… ${(it * 100).toInt()}%" } ?: "Downloading…"
++                    else -> "Reinstall latest version"
++                },
++                subtitle = "Downloads the newest Forbidden Vid build, installs it over this one, then reopens the app",
++                trailingIcon = Icons.Default.SystemUpdate,
++                enabled = !state.isChecking && !state.isDownloading,
++                onClick = { viewModel.reinstallLatest() }
 +            )
 +        }
 +    }
