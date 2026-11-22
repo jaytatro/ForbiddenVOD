@@ -305,10 +305,10 @@ index 349a4f389..0ec8682b4 100644
                                      ModernSidebarScaffold(
 diff --git a/app/src/main/java/com/nuvio/tv/core/kids/KidsContentFilter.kt b/app/src/main/java/com/nuvio/tv/core/kids/KidsContentFilter.kt
 new file mode 100644
-index 000000000..fb3eaf10e
+index 000000000..0cf47c577
 --- /dev/null
 +++ b/app/src/main/java/com/nuvio/tv/core/kids/KidsContentFilter.kt
-@@ -0,0 +1,113 @@
+@@ -0,0 +1,114 @@
 +package com.nuvio.tv.core.kids
 +
 +import android.util.Log
@@ -327,8 +327,8 @@ index 000000000..fb3eaf10e
 +import javax.inject.Singleton
 +
 +/**
-+ * Forbidden Vid kids filter. On a kids profile only titles rated G / PG / PG-13
-+ * (or TV-Y, TV-Y7, TV-G, TV-PG, TV-14) are shown. Ratings come from the addon's
++ * Forbidden Vid kids filter. On a kids profile only movies rated PG / PG-13
++ * and shows rated TV-Y, TV-Y7, TV-G or TV-PG are shown. Ratings come from the addon's
 + * own age rating when present, otherwise from TMDB (US certification).
 + * Anything that can't be rated is hidden.
 + */
@@ -406,7 +406,8 @@ index 000000000..fb3eaf10e
 +    }
 +
 +    companion object {
-+        val ALLOWED = setOf("G", "PG", "PG-13", "TV-Y", "TV-Y7", "TV-Y7-FV", "TV-G", "TV-PG", "TV-14")
++        // Movies: PG and PG-13. TV: TV-Y, TV-Y7, TV-G, TV-PG.
++        val ALLOWED = setOf("PG", "PG-13", "TV-Y", "TV-Y7", "TV-Y7-FV", "TV-G", "TV-PG")
 +
 +        fun normalize(raw: String): String {
 +            val r = raw.trim().uppercase().replace(" ", "").replace("_", "-")
@@ -75191,7 +75192,7 @@ index 2a60888c5..0bb53b24b 100644
      <string name="type_movie">電影</string>
      <string name="type_movies">電影</string>
 diff --git a/app/src/main/res/values/strings.xml b/app/src/main/res/values/strings.xml
-index cc39cbce6..b28d9c456 100644
+index cc39cbce6..98a392711 100644
 --- a/app/src/main/res/values/strings.xml
 +++ b/app/src/main/res/values/strings.xml
 @@ -1,5 +1,5 @@
@@ -75208,7 +75209,7 @@ index cc39cbce6..b28d9c456 100644
 +    <string name="fv_nav_movies" translatable="false">Movies</string>
 +    <string name="fv_nav_tv_series" translatable="false">TV Series</string>
 +    <string name="fv_kids_profile" translatable="false">Kids profile</string>
-+    <string name="fv_kids_profile_subtitle" translatable="false">Only shows titles rated G, PG or PG-13 (TV-Y to TV-14). Unrated titles are hidden.</string>
++    <string name="fv_kids_profile_subtitle" translatable="false">Movies rated PG or PG-13, and shows rated TV-Y, TV-Y7, TV-G or TV-PG. Unrated titles are hidden.</string>
 +    <string name="fv_kids_badge" translatable="false">Kids</string>
 +    <string name="fv_kids_blocked" translatable="false">This title isn\'t available on a kids profile.</string>
  </resources>
