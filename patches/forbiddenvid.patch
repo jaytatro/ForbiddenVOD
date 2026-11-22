@@ -992,11 +992,79 @@ index aba7ae79b..bfedfe53f 100644
                  title = stringResource(R.string.discover_filter_catalog),
                  value = selectedCatalogLabel,
                  selectedValue = uiState.selectedDiscoverCatalogKey,
+diff --git a/app/src/main/java/com/nuvio/tv/ui/screens/settings/ForbiddenUpdatesSettingsContent.kt b/app/src/main/java/com/nuvio/tv/ui/screens/settings/ForbiddenUpdatesSettingsContent.kt
+new file mode 100644
+index 000000000..7a67509a9
+--- /dev/null
++++ b/app/src/main/java/com/nuvio/tv/ui/screens/settings/ForbiddenUpdatesSettingsContent.kt
+@@ -0,0 +1,62 @@
++@file:OptIn(ExperimentalTvMaterial3Api::class)
++
++package com.nuvio.tv.ui.screens.settings
++
++import androidx.activity.ComponentActivity
++import androidx.compose.foundation.layout.Arrangement
++import androidx.compose.foundation.layout.Column
++import androidx.compose.foundation.layout.fillMaxSize
++import androidx.compose.foundation.layout.fillMaxWidth
++import androidx.compose.material.icons.Icons
++import androidx.compose.material.icons.filled.SystemUpdate
++import androidx.compose.runtime.Composable
++import androidx.compose.runtime.getValue
++import androidx.compose.ui.Modifier
++import androidx.compose.ui.focus.FocusRequester
++import androidx.compose.ui.focus.focusRequester
++import androidx.compose.ui.platform.LocalContext
++import androidx.hilt.navigation.compose.hiltViewModel
++import androidx.lifecycle.compose.collectAsStateWithLifecycle
++import androidx.tv.material3.ExperimentalTvMaterial3Api
++import com.nuvio.tv.BuildConfig
++import com.nuvio.tv.ui.theme.NuvioTheme
++import com.nuvio.tv.updater.UpdateViewModel
++
++/** Forbidden Vid: Settings → Updates. Shows the installed version and checks for a newer build. */
++@Composable
++internal fun ForbiddenUpdatesSettingsContent(
++    initialFocusRequester: FocusRequester? = null
++) {
++    val context = LocalContext.current
++    val viewModel: UpdateViewModel = hiltViewModel(context as ComponentActivity)
++    val state by viewModel.uiState.collectAsStateWithLifecycle()
++
++    Column(
++        modifier = Modifier.fillMaxSize(),
++        verticalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.md)
++    ) {
++        SettingsDetailHeader(
++            title = "Updates",
++            subtitle = "You're on Forbidden Vid ${BuildConfig.VERSION_NAME}"
++        )
++        SettingsGroupCard(modifier = Modifier.fillMaxWidth()) {
++            SettingsActionRow(
++                title = if (state.isChecking) "Checking…" else "Check for updates",
++                subtitle = when {
++                    state.update != null -> "A newer version is available"
++                    else -> "Looks for a newer Forbidden Vid build and offers to install it"
++                },
++                trailingIcon = Icons.Default.SystemUpdate,
++                enabled = !state.isChecking,
++                onClick = {
++                    viewModel.checkForUpdates(force = true, showNoUpdateFeedback = true)
++                },
++                modifier = if (initialFocusRequester != null) {
++                    Modifier.focusRequester(initialFocusRequester)
++                } else {
++                    Modifier
++                }
++            )
++        }
++    }
++}
 diff --git a/app/src/main/java/com/nuvio/tv/ui/screens/settings/SettingsCatalog.kt b/app/src/main/java/com/nuvio/tv/ui/screens/settings/SettingsCatalog.kt
-index e7df43304..d4448b992 100644
+index e7df43304..448eb97d9 100644
 --- a/app/src/main/java/com/nuvio/tv/ui/screens/settings/SettingsCatalog.kt
 +++ b/app/src/main/java/com/nuvio/tv/ui/screens/settings/SettingsCatalog.kt
-@@ -31,12 +31,11 @@ internal fun visibleSettingsCategories(
+@@ -31,12 +31,13 @@ internal fun visibleSettingsCategories(
      isWatchPartyAvailable: Boolean = false
  ): List<SettingsCategory> = SettingsCategory.entries.filter { category ->
      when (category) {
@@ -1004,6 +1072,8 @@ index e7df43304..d4448b992 100644
          SettingsCategory.ACCOUNT,
          SettingsCategory.PROFILES -> isPrimaryProfile
 -        SettingsCategory.WATCH_PARTY -> isWatchPartyAvailable
++        // Shown as "Updates" (check for a newer Forbidden Vid build).
++        SettingsCategory.ABOUT -> isPrimaryProfile && com.nuvio.tv.core.build.AppFeaturePolicy.inAppUpdatesEnabled
          SettingsCategory.DEBUG -> isDebugBuild && !isEssentialMode
 -        SettingsCategory.EXPERIENCE -> false
 -        else -> true
@@ -1011,6 +1081,38 @@ index e7df43304..d4448b992 100644
      }
  }
  
+diff --git a/app/src/main/java/com/nuvio/tv/ui/screens/settings/SettingsScreen.kt b/app/src/main/java/com/nuvio/tv/ui/screens/settings/SettingsScreen.kt
+index 9f75a94a0..a863dd261 100644
+--- a/app/src/main/java/com/nuvio/tv/ui/screens/settings/SettingsScreen.kt
++++ b/app/src/main/java/com/nuvio/tv/ui/screens/settings/SettingsScreen.kt
+@@ -37,6 +37,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
+ import androidx.compose.foundation.lazy.LazyListState
+ import androidx.compose.foundation.lazy.rememberLazyListState
+ import androidx.compose.material.icons.Icons
++import androidx.compose.material.icons.filled.SystemUpdate
+ import androidx.compose.material.icons.rounded.Groups
+ import androidx.compose.material.icons.rounded.PlayArrow
+ import androidx.compose.material.icons.filled.BugReport
+@@ -164,7 +165,7 @@ private fun settingsSectionSpec(category: SettingsCategory): SettingsSectionSpec
+     SettingsCategory.INTEGRATION -> SettingsSectionSpec(category, stringResource(R.string.settings_integration), Icons.Default.Link, destination = SettingsSectionDestination.Inline)
+     SettingsCategory.TRACKING -> SettingsSectionSpec(category, stringResource(R.string.settings_tracking_title), Icons.Default.Sync, destination = SettingsSectionDestination.Inline)
+     SettingsCategory.ADVANCED -> SettingsSectionSpec(category, stringResource(R.string.settings_advanced), Icons.Default.Build, destination = SettingsSectionDestination.Inline)
+-    SettingsCategory.ABOUT -> SettingsSectionSpec(category, stringResource(R.string.about_title), Icons.Default.Info, destination = SettingsSectionDestination.Inline)
++    SettingsCategory.ABOUT -> SettingsSectionSpec(category, "Updates", Icons.Default.SystemUpdate, destination = SettingsSectionDestination.Inline)
+     SettingsCategory.DEBUG -> SettingsSectionSpec(category, stringResource(R.string.settings_debug), Icons.Default.BugReport, destination = SettingsSectionDestination.Inline)
+     SettingsCategory.EXPERIENCE -> SettingsSectionSpec(category, stringResource(R.string.settings_experience), Icons.Default.Tune, destination = SettingsSectionDestination.Inline)
+ }
+@@ -945,9 +946,7 @@ private fun SettingsDetailPane(
+             animeSkipFocusRequester = integrationAnimeSkipFocusRequester,
+             autoFocusEnabled = allowDetailAutofocus
+         )
+-        SettingsCategory.ABOUT -> AboutSettingsContent(
+-            onNavigateToSupportersContributors = onNavigateToSupportersContributors,
+-            onNavigateToLicensesAttributions = onNavigateToLicensesAttributions,
++        SettingsCategory.ABOUT -> ForbiddenUpdatesSettingsContent(
+             initialFocusRequester = if (allowDetailAutofocus) {
+                 contentFocusRequesters[SettingsCategory.ABOUT]
+             } else {
 diff --git a/app/src/main/java/com/nuvio/tv/ui/theme/ThemeColors.kt b/app/src/main/java/com/nuvio/tv/ui/theme/ThemeColors.kt
 index fae3dfe69..845b6c753 100644
 --- a/app/src/main/java/com/nuvio/tv/ui/theme/ThemeColors.kt
