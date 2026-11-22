@@ -62,31 +62,14 @@ jobs:
           fi
 
       - name: Signing key
-        env:
-          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        # Always the same permanent key (signing/forbiddenvid.jks) so each build installs over the last one.
         run: |
-          if [ -n "$KEYSTORE_B64" ]; then
-            echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
-            {
-              echo "NUVIO_RELEASE_STORE_FILE=$RUNNER_TEMP/release.jks"
-              echo "NUVIO_RELEASE_KEY_ALIAS=$KEY_ALIAS"
-              echo "NUVIO_RELEASE_KEY_PASSWORD=$KEYSTORE_PASSWORD"
-              echo "NUVIO_RELEASE_STORE_PASSWORD=$KEYSTORE_PASSWORD"
-            } >> "$GITHUB_ENV"
-            echo "Using your permanent signing key"
-          else
-            keytool -genkeypair -keystore "$RUNNER_TEMP/temp.jks" -storepass android -alias temp \
-              -keypass android -dname "CN=Forbidden Vid,O=Forbidden Vid,C=US" -keyalg RSA -keysize 2048 -validity 10000
-            {
-              echo "NUVIO_RELEASE_STORE_FILE=$RUNNER_TEMP/temp.jks"
-              echo "NUVIO_RELEASE_KEY_ALIAS=temp"
-              echo "NUVIO_RELEASE_KEY_PASSWORD=android"
-              echo "NUVIO_RELEASE_STORE_PASSWORD=android"
-            } >> "$GITHUB_ENV"
-            echo "::warning::No signing secrets - APK signed with a temporary key (updates need uninstall first)."
-          fi
+          {
+            echo "NUVIO_RELEASE_STORE_FILE=$GITHUB_WORKSPACE/fv/signing/forbiddenvid.jks"
+            echo "NUVIO_RELEASE_KEY_ALIAS=forbiddenvid"
+            echo "NUVIO_RELEASE_KEY_PASSWORD=forbiddenvid-5e7f6ab2a198bca6"
+            echo "NUVIO_RELEASE_STORE_PASSWORD=forbiddenvid-5e7f6ab2a198bca6"
+          } >> "$GITHUB_ENV"
 
       - name: Build APK
         working-directory: nuvio

@@ -18,7 +18,8 @@ applies the patch and builds the APK into **Releases**.
 **Download:** https://github.com/jaytatro/ForbiddenVOD/releases/latest/download/ForbiddenVid-arm64-v8a.apk
 
 Optional repository secrets (Settings → Secrets and variables → Actions):
-`TMDB_API_KEY` (free from themoviedb.org — makes kids filtering accurate),
-`ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS` (permanent signing key).
+`TMDB_API_KEY` (free from themoviedb.org — needed for kids profile ratings).
+
+Builds are always signed with `signing/forbiddenvid.jks`, so each new build installs over the previous one.
 
 Licensed GPL-3.0, like NuvioTV.
