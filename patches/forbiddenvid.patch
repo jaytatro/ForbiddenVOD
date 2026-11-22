@@ -390,10 +390,10 @@ index 349a4f389..0ec8682b4 100644
                                      ModernSidebarScaffold(
 diff --git a/app/src/main/java/com/nuvio/tv/core/kids/KidsContentFilter.kt b/app/src/main/java/com/nuvio/tv/core/kids/KidsContentFilter.kt
 new file mode 100644
-index 000000000..0cf47c577
+index 000000000..1050f8274
 --- /dev/null
 +++ b/app/src/main/java/com/nuvio/tv/core/kids/KidsContentFilter.kt
-@@ -0,0 +1,114 @@
+@@ -0,0 +1,118 @@
 +package com.nuvio.tv.core.kids
 +
 +import android.util.Log
@@ -428,19 +428,23 @@ index 000000000..0cf47c577
 +    // Ratings are remembered between launches so kids rows load fast after the first time.
 +    private val saved = context.getSharedPreferences("fv_kids_ratings", android.content.Context.MODE_PRIVATE)
 +
-+    val isActive: Boolean get() = kidsProfileStore.isKidsProfileActive.value
++    suspend fun isActive(): Boolean = kidsProfileStore.isKidsProfileActiveNow()
 +
 +    suspend fun filter(items: List<MetaPreview>): List<MetaPreview> {
-+        if (!isActive || items.isEmpty()) return items
++        if (items.isEmpty() || !isActive()) return items
 +        return coroutineScope {
 +            items.map { item ->
-+                async { if (isAllowed(item.id, item.rawType, item.ageRating, item.imdbId)) item else null }
++                async { if (isRatingAllowed(item.id, item.rawType, item.ageRating, item.imdbId)) item else null }
 +            }.awaitAll().filterNotNull()
 +        }
 +    }
 +
 +    suspend fun isAllowed(id: String, type: String, ageRating: String? = null, imdbId: String? = null): Boolean {
-+        if (!isActive) return true
++        if (!isActive()) return true
++        return isRatingAllowed(id, type, ageRating, imdbId)
++    }
++
++    private suspend fun isRatingAllowed(id: String, type: String, ageRating: String?, imdbId: String?): Boolean {
 +        val direct = ageRating?.let(::normalize)?.takeIf { it.isNotEmpty() }
 +        val rating = direct ?: ratingFor(id, type, imdbId)
 +        return rating in ALLOWED
@@ -510,10 +514,10 @@ index 000000000..0cf47c577
 +}
 diff --git a/app/src/main/java/com/nuvio/tv/core/kids/KidsProfileStore.kt b/app/src/main/java/com/nuvio/tv/core/kids/KidsProfileStore.kt
 new file mode 100644
-index 000000000..797040f14
+index 000000000..e15fe7b8b
 --- /dev/null
 +++ b/app/src/main/java/com/nuvio/tv/core/kids/KidsProfileStore.kt
-@@ -0,0 +1,57 @@
+@@ -0,0 +1,69 @@
 +package com.nuvio.tv.core.kids
 +
 +import android.content.Context
@@ -531,6 +535,7 @@ index 000000000..797040f14
 +import kotlinx.coroutines.flow.SharingStarted
 +import kotlinx.coroutines.flow.StateFlow
 +import kotlinx.coroutines.flow.combine
++import kotlinx.coroutines.flow.first
 +import kotlinx.coroutines.flow.map
 +import kotlinx.coroutines.flow.stateIn
 +import javax.inject.Inject
@@ -543,7 +548,8 @@ index 000000000..797040f14
 +@Singleton
 +class KidsProfileStore @Inject constructor(
 +    @ApplicationContext context: Context,
-+    profileManager: ProfileManager
++    profileManager: ProfileManager,
++    private val profileDataStore: com.nuvio.tv.data.local.ProfileDataStore
 +) {
 +    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 +    private val key = stringSetPreferencesKey("kids_profile_ids")
@@ -562,6 +568,16 @@ index 000000000..797040f14
 +
 +    fun isKids(profileId: Int): Boolean = profileId in kidsProfileIds.value
 +
++    /** Reads the saved active profile and kids list from storage, so it's right even during startup or a switch. */
++    suspend fun isKidsProfileActiveNow(): Boolean {
++        val ids = store.data.first()[key].orEmpty().mapNotNull { it.toIntOrNull() }.filter { it != 1 }.toSet()
++        if (ids.isEmpty()) return false
++        return profileDataStore.activeProfileId.first() in ids
++    }
++
++    suspend fun isKidsNow(profileId: Int): Boolean =
++        profileId != 1 && store.data.first()[key].orEmpty().contains(profileId.toString())
++
 +    suspend fun setKids(profileId: Int, kids: Boolean) {
 +        if (profileId == 1) return
 +        store.edit { prefs ->
@@ -571,6 +587,32 @@ index 000000000..797040f14
 +        }
 +    }
 +}
+diff --git a/app/src/main/java/com/nuvio/tv/core/profile/ProfileManager.kt b/app/src/main/java/com/nuvio/tv/core/profile/ProfileManager.kt
+index e66b4535f..83932ab9e 100644
+--- a/app/src/main/java/com/nuvio/tv/core/profile/ProfileManager.kt
++++ b/app/src/main/java/com/nuvio/tv/core/profile/ProfileManager.kt
+@@ -1,6 +1,7 @@
+ package com.nuvio.tv.core.profile
+ 
+ import android.content.Context
++import androidx.datastore.preferences.core.edit
+ import com.nuvio.tv.R
+ import com.nuvio.tv.data.local.ProfileDataStore
+ import com.nuvio.tv.data.local.ProfileDataStoreFactory
+@@ -132,6 +133,13 @@ class ProfileManager @Inject constructor(
+         (remoteIds - previousIds).forEach { id -> factory.markProfileCreated(id) }
+     }
+ 
++    /** Forbidden Vid: forget linked accounts (Trakt, MDBList, Simkl, servers…) for a kids profile. */
++    suspend fun clearProfileCredentials(id: Int) {
++        if (id == 1) return
++        credentialStores.forEach { store -> runCatching { store.removeProfile(id) } }
++        runCatching { factory.get(id, "trakt_auth_store").edit { it.clear() } }
++    }
++
+     private suspend fun removeLocalProfileData(id: Int) {
+         if (id == 1) return
+         credentialStores.forEach { store -> store.removeProfile(id) }
 diff --git a/app/src/main/java/com/nuvio/tv/data/local/ProfileDataStore.kt b/app/src/main/java/com/nuvio/tv/data/local/ProfileDataStore.kt
 index 1d0da5b7e..d82e26a76 100644
 --- a/app/src/main/java/com/nuvio/tv/data/local/ProfileDataStore.kt
@@ -589,7 +631,7 @@ index 1d0da5b7e..d82e26a76 100644
              listOf(defaultPrimaryProfile())
          }
 diff --git a/app/src/main/java/com/nuvio/tv/data/repository/CatalogRepositoryImpl.kt b/app/src/main/java/com/nuvio/tv/data/repository/CatalogRepositoryImpl.kt
-index 8490d68e4..94fcb7607 100644
+index 8490d68e4..554427149 100644
 --- a/app/src/main/java/com/nuvio/tv/data/repository/CatalogRepositoryImpl.kt
 +++ b/app/src/main/java/com/nuvio/tv/data/repository/CatalogRepositoryImpl.kt
 @@ -28,10 +28,12 @@ class CatalogRepositoryImpl @Inject constructor(
@@ -612,7 +654,7 @@ index 8490d68e4..94fcb7607 100644
              }
 -            emit(NetworkResult.Success(row))
 +            val kidsItems = kidsContentFilter.filter(row.items)
-+            if (kidsContentFilter.isActive && kidsItems.isEmpty() && row.items.isNotEmpty()) {
++            if (kidsItems.isEmpty() && row.items.isNotEmpty() && kidsContentFilter.isActive()) {
 +                emit(NetworkResult.Error(KIDS_EMPTY_MESSAGE))
 +                return@flow
 +            }
@@ -627,7 +669,7 @@ index 8490d68e4..94fcb7607 100644
 +                    .let { kidsContentFilter.filter(it) }
 +                // Forbidden Vid: on a kids profile a row with nothing kid-friendly is dropped
 +                // (an empty row would otherwise sit on Home as a loading placeholder).
-+                if (kidsContentFilter.isActive && items.isEmpty() && rawItemCount > 0) {
++                if (items.isEmpty() && rawItemCount > 0 && kidsContentFilter.isActive()) {
 +                    emit(NetworkResult.Error(KIDS_EMPTY_MESSAGE))
 +                    return@flow
 +                }
@@ -720,7 +762,7 @@ index 80512ff00..f81e84d3b 100644
              1f to Color.Black
          ),
 diff --git a/app/src/main/java/com/nuvio/tv/ui/screens/detail/MetaDetailsViewModel.kt b/app/src/main/java/com/nuvio/tv/ui/screens/detail/MetaDetailsViewModel.kt
-index 549a10ec6..c831cf3ee 100644
+index 549a10ec6..1771b9064 100644
 --- a/app/src/main/java/com/nuvio/tv/ui/screens/detail/MetaDetailsViewModel.kt
 +++ b/app/src/main/java/com/nuvio/tv/ui/screens/detail/MetaDetailsViewModel.kt
 @@ -1,5 +1,7 @@
@@ -739,7 +781,7 @@ index 549a10ec6..c831cf3ee 100644
      private val metaRepository: MetaRepository,
      private val tmdbSettingsDataStore: TmdbSettingsDataStore,
      private val tmdbService: TmdbService,
-@@ -173,6 +176,26 @@ class MetaDetailsViewModel @Inject constructor(
+@@ -173,6 +176,24 @@ class MetaDetailsViewModel @Inject constructor(
      private val _optimisticUnmarks = mutableSetOf<Pair<Int, Int>>()
  
      init {
@@ -750,9 +792,7 @@ index 549a10ec6..c831cf3ee 100644
 +                .filterNotNull()
 +                .distinctUntilChangedBy { it.id }
 +                .collect { meta ->
-+                    if (kidsContentFilter.isActive &&
-+                        !kidsContentFilter.isAllowed(meta.id, meta.rawType, meta.ageRating, meta.imdbId)
-+                    ) {
++                    if (!kidsContentFilter.isAllowed(meta.id, meta.rawType, meta.ageRating, meta.imdbId)) {
 +                        _uiState.update {
 +                            it.copy(
 +                                isLoading = false,
@@ -766,6 +806,35 @@ index 549a10ec6..c831cf3ee 100644
          posterOptions.bind(viewModelScope)
          observeMetaViewSettings()
          observeTrailerAutoplaySettings()
+diff --git a/app/src/main/java/com/nuvio/tv/ui/screens/home/HomeViewModel.kt b/app/src/main/java/com/nuvio/tv/ui/screens/home/HomeViewModel.kt
+index fbe3d40d2..9ce35e42d 100644
+--- a/app/src/main/java/com/nuvio/tv/ui/screens/home/HomeViewModel.kt
++++ b/app/src/main/java/com/nuvio/tv/ui/screens/home/HomeViewModel.kt
+@@ -67,6 +67,7 @@ class HomeViewModel @Inject constructor(
+     internal val addonRepository: AddonRepository,
+     internal val startupSyncService: com.nuvio.tv.core.sync.StartupSyncService,
+     internal val catalogRepository: CatalogRepository,
++    internal val kidsContentFilter: com.nuvio.tv.core.kids.KidsContentFilter,
+     internal val watchProgressRepository: WatchProgressRepository,
+     internal val libraryRepository: LibraryRepository,
+     internal val metaRepository: MetaRepository,
+diff --git a/app/src/main/java/com/nuvio/tv/ui/screens/home/HomeViewModelCatalogPipeline.kt b/app/src/main/java/com/nuvio/tv/ui/screens/home/HomeViewModelCatalogPipeline.kt
+index f2ca5dec4..cf2e1820f 100644
+--- a/app/src/main/java/com/nuvio/tv/ui/screens/home/HomeViewModelCatalogPipeline.kt
++++ b/app/src/main/java/com/nuvio/tv/ui/screens/home/HomeViewModelCatalogPipeline.kt
+@@ -51,7 +51,11 @@ internal fun HomeViewModel.observeCollectionsPipeline() {
+             .collectLatest { collections ->
+                 // Deduplicate by collection ID (keep last occurrence) to prevent
+                 // duplicate LazyColumn keys when users import overlapping collections.
+-                collectionsCache = collections.associateBy { it.id }.values.toList()
++                collectionsCache = if (kidsContentFilter.isActive()) {
++                    emptyList() // Forbidden Vid: kids profiles don't get the primary's lists/collections.
++                } else {
++                    collections.associateBy { it.id }.values.toList()
++                }
+                 rebuildCatalogOrder(addonsCache)
+                 scheduleUpdateCatalogRows()
+             }
 diff --git a/app/src/main/java/com/nuvio/tv/ui/screens/profile/ProfileSelectionScreen.kt b/app/src/main/java/com/nuvio/tv/ui/screens/profile/ProfileSelectionScreen.kt
 index 5993b786e..e19d48cfc 100644
 --- a/app/src/main/java/com/nuvio/tv/ui/screens/profile/ProfileSelectionScreen.kt
@@ -896,7 +965,7 @@ index 5993b786e..e19d48cfc 100644
                          text = stringResource(R.string.profile_cancel),
                          isPrimary = true,
 diff --git a/app/src/main/java/com/nuvio/tv/ui/screens/profile/ProfileSelectionViewModel.kt b/app/src/main/java/com/nuvio/tv/ui/screens/profile/ProfileSelectionViewModel.kt
-index ebee289f3..fda45d8f1 100644
+index ebee289f3..da8456706 100644
 --- a/app/src/main/java/com/nuvio/tv/ui/screens/profile/ProfileSelectionViewModel.kt
 +++ b/app/src/main/java/com/nuvio/tv/ui/screens/profile/ProfileSelectionViewModel.kt
 @@ -51,7 +51,8 @@ class ProfileSelectionViewModel @Inject constructor(
@@ -909,7 +978,7 @@ index ebee289f3..fda45d8f1 100644
  ) : ViewModel() {
      val activeProfileId: StateFlow<Int> = profileManager.activeProfileId
      val profiles: StateFlow<List<UserProfile>> = profileManager.profiles
-@@ -164,11 +165,33 @@ class ProfileSelectionViewModel @Inject constructor(
+@@ -164,11 +165,39 @@ class ProfileSelectionViewModel @Inject constructor(
      var isSelectingProfile = false
          private set
  
@@ -917,21 +986,27 @@ index ebee289f3..fda45d8f1 100644
 +    val kidsProfileIds: StateFlow<Set<Int>> = kidsProfileStore.kidsProfileIds
 +
 +    fun setKidsProfile(profileId: Int, kids: Boolean) {
-+        viewModelScope.launch { kidsProfileStore.setKids(profileId, kids) }
++        viewModelScope.launch {
++            kidsProfileStore.setKids(profileId, kids)
++            if (kids) profileManager.clearProfileCredentials(profileId)
++        }
 +    }
 +
 +    /** Forbidden Vid: secondary profiles always mirror the primary profile's settings. */
 +    private suspend fun mirrorPrimarySetup(targetProfileId: Int) {
 +        if (targetProfileId == 1) return
++        val isKids = kidsProfileStore.isKidsNow(targetProfileId)
 +        runCatching {
 +            kotlinx.coroutines.withTimeoutOrNull(10_000) {
 +                profileSettingsSyncService.copyProfileSetup(
 +                    sourceProfileId = 1,
 +                    targetProfileId = targetProfileId,
-+                    copyProviderCredentials = true
++                    // Kids profiles get the primary's addons and settings, but not its linked accounts.
++                    copyProviderCredentials = !isKids
 +                )
 +            }
 +        }.onFailure { Log.w("ProfileSelectionVM", "Couldn't mirror primary settings", it) }
++        if (isKids) profileManager.clearProfileCredentials(targetProfileId)
 +    }
 +
      fun selectProfile(id: Int, onComplete: () -> Unit, onFailure: () -> Unit) {
@@ -943,7 +1018,7 @@ index ebee289f3..fda45d8f1 100644
                  profileManager.setActiveProfile(id)
                  onComplete()
              } catch (error: CancellationException) {
-@@ -188,6 +211,7 @@ class ProfileSelectionViewModel @Inject constructor(
+@@ -188,6 +217,7 @@ class ProfileSelectionViewModel @Inject constructor(
          avatarId: String? = null,
          copyFromProfileId: Int? = null,
          copyProviderCredentials: Boolean = false,
@@ -951,7 +1026,7 @@ index ebee289f3..fda45d8f1 100644
          onComplete: (CreateProfileResult) -> Unit = {}
      ) {
          if (_isCreating.value) return
-@@ -200,14 +224,14 @@ class ProfileSelectionViewModel @Inject constructor(
+@@ -200,14 +230,15 @@ class ProfileSelectionViewModel @Inject constructor(
                      avatarId = avatarId
                  )
                  if (profile != null) {
@@ -968,8 +1043,9 @@ index ebee289f3..fda45d8f1 100644
 +                    val copyResult = profileSettingsSyncService.copyProfileSetup(
 +                        sourceProfileId = 1,
 +                        targetProfileId = profile.id,
-+                        copyProviderCredentials = true
++                        copyProviderCredentials = !isKids
 +                    )
++                    if (isKids) profileManager.clearProfileCredentials(profile.id)
                      refreshProfilePinStates()
                      CreateProfileResult.Created(profile, copyResult)
                  } else {
