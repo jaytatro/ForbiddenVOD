@@ -418,7 +418,7 @@ index 349a4f389..0ec8682b4 100644
                                      ModernSidebarScaffold(
 diff --git a/app/src/main/java/com/nuvio/tv/core/kids/KidsCatalogService.kt b/app/src/main/java/com/nuvio/tv/core/kids/KidsCatalogService.kt
 new file mode 100644
-index 000000000..97a1d0134
+index 000000000..bcb2d13e5
 --- /dev/null
 +++ b/app/src/main/java/com/nuvio/tv/core/kids/KidsCatalogService.kt
 @@ -0,0 +1,133 @@
@@ -456,7 +456,7 @@ index 000000000..97a1d0134
 +) {
 +    private val prefs = context.getSharedPreferences("fv_kids_catalog", Context.MODE_PRIVATE)
 +    private val memory = ConcurrentHashMap<String, String>()
-+    private val permits = Semaphore(8)
++    private val permits = Semaphore(12)
 +
 +    val hasRatingsSource: Boolean get() = BuildConfig.TMDB_API_KEY.isNotBlank()
 +
@@ -1169,10 +1169,10 @@ index f2ca5dec4..cf2e1820f 100644
              }
 diff --git a/app/src/main/java/com/nuvio/tv/ui/screens/kids/KidsScreens.kt b/app/src/main/java/com/nuvio/tv/ui/screens/kids/KidsScreens.kt
 new file mode 100644
-index 000000000..641375e45
+index 000000000..bec287849
 --- /dev/null
 +++ b/app/src/main/java/com/nuvio/tv/ui/screens/kids/KidsScreens.kt
-@@ -0,0 +1,182 @@
+@@ -0,0 +1,191 @@
 +@file:OptIn(ExperimentalTvMaterial3Api::class)
 +
 +package com.nuvio.tv.ui.screens.kids
@@ -1223,6 +1223,11 @@ index 000000000..641375e45
 +) {
 +    val viewModel: KidsViewModel = hiltViewModel()
 +    val isKids by viewModel.isKids.collectAsState()
++    val startupLoadingState = com.nuvio.tv.ui.components.LocalStartupLoadingState.current
++    // The normal Home screen ends the startup loading screen itself; the kids screens must do it too.
++    LaunchedEffect(isKids, startupLoadingState) {
++        if (isKids == true) startupLoadingState?.complete = true
++    }
 +    when (isKids) {
 +        null -> Box(Modifier.fillMaxSize().background(NuvioTheme.colors.Background))
 +        true -> kidsContent()
@@ -1235,7 +1240,11 @@ index 000000000..641375e45
 +    onNavigateToDetail: (String, String) -> Unit,
 +    viewModel: KidsViewModel = hiltViewModel()
 +) {
-+    LaunchedEffect(Unit) { viewModel.loadHome() }
++    val startupLoadingState = com.nuvio.tv.ui.components.LocalStartupLoadingState.current
++    LaunchedEffect(Unit) {
++        startupLoadingState?.complete = true
++        viewModel.loadHome()
++    }
 +    val rows by viewModel.homeRows.collectAsState()
 +
 +    LazyColumn(
@@ -1357,10 +1366,10 @@ index 000000000..641375e45
 +}
 diff --git a/app/src/main/java/com/nuvio/tv/ui/screens/kids/KidsViewModel.kt b/app/src/main/java/com/nuvio/tv/ui/screens/kids/KidsViewModel.kt
 new file mode 100644
-index 000000000..b40e13e39
+index 000000000..9fb8dbb6a
 --- /dev/null
 +++ b/app/src/main/java/com/nuvio/tv/ui/screens/kids/KidsViewModel.kt
-@@ -0,0 +1,132 @@
+@@ -0,0 +1,138 @@
 +package com.nuvio.tv.ui.screens.kids
 +
 +import androidx.lifecycle.ViewModel
@@ -1441,12 +1450,18 @@ index 000000000..b40e13e39
 +        defs.forEach { (key, _, spec) ->
 +            viewModelScope.launch {
 +                val (type, genre) = spec
-+                val items = (1..2).map { page ->
-+                    async { if (type == "movie") service.movies(genre, page) else service.tv(genre, page) }
-+                }.awaitAll().flatten().distinctBy { it.id }
-+                _homeRows.update { rows ->
-+                    rows.map { if (it.key == key) it.copy(items = items, loading = false) else it }
-+                        .filterNot { !it.loading && it.items.isEmpty() }
++                // Show the first page as soon as it's ready, then add a second page.
++                for (page in 1..2) {
++                    val pageItems = if (type == "movie") service.movies(genre, page) else service.tv(genre, page)
++                    _homeRows.update { rows ->
++                        rows.map {
++                            if (it.key == key) {
++                                it.copy(items = (it.items + pageItems).distinctBy { item -> item.id }, loading = page < 2)
++                            } else {
++                                it
++                            }
++                        }.filterNot { !it.loading && it.items.isEmpty() }
++                    }
 +                }
 +            }
 +        }
