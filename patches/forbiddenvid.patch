@@ -31,6 +31,91 @@ index bc5add087..dc035691e 100644
      }
  
      flavorDimensions += "distribution"
+diff --git a/app/src/full/AndroidManifest.xml b/app/src/full/AndroidManifest.xml
+index ffd100a9e..e7e513907 100644
+--- a/app/src/full/AndroidManifest.xml
++++ b/app/src/full/AndroidManifest.xml
+@@ -13,5 +13,14 @@
+         <receiver
+             android:name=".updater.UpdateInstallResultReceiver"
+             android:exported="false" />
++
++        <!-- Forbidden Vid: reopen the app after an update the user started finishes installing. -->
++        <receiver
++            android:name=".updater.AppRelaunchReceiver"
++            android:exported="false">
++            <intent-filter>
++                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
++            </intent-filter>
++        </receiver>
+     </application>
+ </manifest>
+diff --git a/app/src/full/java/com/nuvio/tv/updater/ApkInstaller.kt b/app/src/full/java/com/nuvio/tv/updater/ApkInstaller.kt
+index 175511641..2139e8f97 100644
+--- a/app/src/full/java/com/nuvio/tv/updater/ApkInstaller.kt
++++ b/app/src/full/java/com/nuvio/tv/updater/ApkInstaller.kt
+@@ -44,6 +44,7 @@ object ApkInstaller {
+         background: Boolean,
+         withDexMetadata: Boolean = true
+     ) {
++        if (!background) AppRelaunchReceiver.requestRelaunch(context)
+         val packageInstaller = context.packageManager.packageInstaller
+         val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL).apply {
+             setAppPackageName(context.packageName)
+@@ -84,6 +85,7 @@ object ApkInstaller {
+ 
+     /** Hands the APK to the system installer screen, used when the session install cannot be completed. */
+     fun launchSystemInstaller(context: Context, apkFile: File) {
++        AppRelaunchReceiver.requestRelaunch(context)
+         val authority = "${BuildConfig.APPLICATION_ID}.fileprovider"
+         val uri = FileProvider.getUriForFile(context, authority, apkFile)
+ 
+diff --git a/app/src/full/java/com/nuvio/tv/updater/AppRelaunchReceiver.kt b/app/src/full/java/com/nuvio/tv/updater/AppRelaunchReceiver.kt
+new file mode 100644
+index 000000000..be7108ad5
+--- /dev/null
++++ b/app/src/full/java/com/nuvio/tv/updater/AppRelaunchReceiver.kt
+@@ -0,0 +1,40 @@
++package com.nuvio.tv.updater
++
++import android.content.BroadcastReceiver
++import android.content.Context
++import android.content.Intent
++import android.util.Log
++
++/**
++ * Forbidden Vid: after an update the user started has installed, reopen the app on its home screen.
++ */
++class AppRelaunchReceiver : BroadcastReceiver() {
++
++    override fun onReceive(context: Context, intent: Intent) {
++        if (intent.action != Intent.ACTION_MY_PACKAGE_REPLACED) return
++        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
++        val requestedAt = prefs.getLong(KEY_REQUESTED_AT, 0L)
++        prefs.edit().remove(KEY_REQUESTED_AT).apply()
++        if (requestedAt == 0L || System.currentTimeMillis() - requestedAt > MAX_WAIT_MS) return
++
++        val pm = context.packageManager
++        val launch = pm.getLeanbackLaunchIntentForPackage(context.packageName)
++            ?: pm.getLaunchIntentForPackage(context.packageName)
++            ?: return
++        launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
++        runCatching { context.startActivity(launch) }
++            .onFailure { Log.w("AppRelaunch", "Couldn't reopen the app after the update", it) }
++    }
++
++    companion object {
++        private const val PREFS = "fv_update_relaunch"
++        private const val KEY_REQUESTED_AT = "requested_at"
++        private const val MAX_WAIT_MS = 30 * 60 * 1000L
++
++        /** Call right before handing an update to the installer the user asked for. */
++        fun requestRelaunch(context: Context) {
++            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
++                .edit().putLong(KEY_REQUESTED_AT, System.currentTimeMillis()).commit()
++        }
++    }
++}
 diff --git a/app/src/full/java/com/nuvio/tv/updater/ui/UpdateBannerHost.kt b/app/src/full/java/com/nuvio/tv/updater/ui/UpdateBannerHost.kt
 index 76c43e2c1..fabe327c8 100644
 --- a/app/src/full/java/com/nuvio/tv/updater/ui/UpdateBannerHost.kt
