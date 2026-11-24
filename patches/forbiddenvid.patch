@@ -1367,6 +1367,49 @@ index 549a10ec6..1a63374c6 100644
          posterOptions.bind(viewModelScope)
          observeMetaViewSettings()
          observeTrailerAutoplaySettings()
+diff --git a/app/src/main/java/com/nuvio/tv/ui/screens/home/HomeEpisodeShuffle.kt b/app/src/main/java/com/nuvio/tv/ui/screens/home/HomeEpisodeShuffle.kt
+index af5b146a3..794a552e4 100644
+--- a/app/src/main/java/com/nuvio/tv/ui/screens/home/HomeEpisodeShuffle.kt
++++ b/app/src/main/java/com/nuvio/tv/ui/screens/home/HomeEpisodeShuffle.kt
+@@ -1,5 +1,6 @@
+ package com.nuvio.tv.ui.screens.home
+ 
++import kotlinx.coroutines.flow.map
+ import androidx.lifecycle.viewModelScope
+ import com.nuvio.tv.data.local.EpisodeShuffleProfile
+ import com.nuvio.tv.domain.model.ContinueWatchingSortMode
+@@ -43,7 +44,7 @@ internal fun HomeViewModel.createShuffleHomeState(): StateFlow<HomeUiState> {
+                     season = video.season, episode = video.episode, overview = video.overview, available = video.available)
+             }
+         }
+-    }.stateIn(viewModelScope, SharingStarted.Eagerly, HomeUiState())
++    }.map { splitContinueWatchingByType(it) }.stateIn(viewModelScope, SharingStarted.Eagerly, HomeUiState())
+ }
+ 
+ private fun HomeViewModel.finishedShuffleSeeds() = combine(
+@@ -124,3 +125,22 @@ internal fun applyHomeShuffle(
+     val (current, upcoming) = splitUpcomingItems(unique, sortMode)
+     return state.copy(continueWatchingItems = current, upcomingItems = upcoming)
+ }
++
++
++/**
++ * Forbidden Vid: Continue Watching is shown as two rows - movies first ("Continue Watching Movies"),
++ * then shows ("Continue Watching TV Series"), using the home screen's second row slot.
++ */
++internal fun splitContinueWatchingByType(state: HomeUiState): HomeUiState {
++    val all = state.continueWatchingItems + state.upcomingItems
++    if (all.isEmpty()) return state
++    val (movies, series) = all.partition { item ->
++        when (item) {
++            is ContinueWatchingItem.InProgress ->
++                item.progress.contentType.equals("movie", ignoreCase = true) && item.progress.season == null
++            is ContinueWatchingItem.NextUp -> false
++        }
++    }
++    if (movies == state.continueWatchingItems && series == state.upcomingItems) return state
++    return state.copy(continueWatchingItems = movies, upcomingItems = series)
++}
 diff --git a/app/src/main/java/com/nuvio/tv/ui/screens/home/HomeViewModel.kt b/app/src/main/java/com/nuvio/tv/ui/screens/home/HomeViewModel.kt
 index fbe3d40d2..9ce35e42d 100644
 --- a/app/src/main/java/com/nuvio/tv/ui/screens/home/HomeViewModel.kt
@@ -86007,7 +86050,7 @@ index 2a60888c5..8cd387129 100644
      <string name="simkl_sync_info_docs">閱讀 Simkl 同步指南</string>
      <string name="error_open_browser_failed">無法開啟瀏覽器</string>
 diff --git a/app/src/main/res/values/strings.xml b/app/src/main/res/values/strings.xml
-index cc39cbce6..05dadcde6 100644
+index cc39cbce6..58c51ee68 100644
 --- a/app/src/main/res/values/strings.xml
 +++ b/app/src/main/res/values/strings.xml
 @@ -1,5 +1,5 @@
@@ -86026,6 +86069,15 @@ index cc39cbce6..05dadcde6 100644
      <string name="auth_notice_trakt_logged_out">You have been signed out of Trakt. Please reconnect.</string>
      <string name="error_generic">An error occurred</string>
  
+@@ -136,7 +136,7 @@
+     <string name="error_stream_tried_generic">Tried stream addons: %1$s. Streams could not be loaded for id=%2$s (type=%3$s).</string>
+     <string name="error_stream_tried_issues">Tried stream addons: %1$s. Streams could not be loaded for id=%2$s (type=%3$s). Issues: %4$s.</string>
+ 
+-    <string name="continue_watching">Continue Watching</string>
++    <string name="continue_watching">Continue Watching Movies</string>
+     <string name="cw_upcoming">Upcoming</string>
+     <string name="cw_next_up">Next Up</string>
+     <string name="cw_next_up_short">Next</string>
 @@ -369,7 +369,7 @@
      <string name="appearance_settings_style">Settings Style</string>
      <string name="appearance_settings_style_subtitle">Choose how the settings screens are presented</string>
@@ -86209,6 +86261,15 @@ index cc39cbce6..05dadcde6 100644
  
      <string name="video_section">Video</string>
      <string name="playback_true_black_letterbox">True black bars</string>
+@@ -1109,7 +1109,7 @@
+     <string name="layout_cw_sort_streaming_desc">Released items first, upcoming at the end</string>
+     <string name="layout_cw_sort_split_upcoming">Separate Upcoming Row</string>
+     <string name="layout_cw_sort_split_upcoming_desc">Move unaired episodes to a separate Upcoming row</string>
+-    <string name="upcoming_section_title">Upcoming</string>
++    <string name="upcoming_section_title">Continue Watching TV Series</string>
+     <string name="layout_trailer_button">Show Trailer Button</string>
+     <string name="layout_trailer_button_sub">Show trailer button on detail page (only when trailer is available).</string>
+     <string name="layout_trailer_play_in_background">Play in Background</string>
 @@ -1332,7 +1332,7 @@
      <string name="debrid_disconnect">Disconnect</string>
      <string name="debrid_device_auth_connected">%1$s is connected on this device.</string>
