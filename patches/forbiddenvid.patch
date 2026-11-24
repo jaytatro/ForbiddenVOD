@@ -277,7 +277,7 @@ index 52b648362..0d7b5ba07 100644
 +    }
 +}
 diff --git a/app/src/main/java/com/nuvio/tv/MainActivity.kt b/app/src/main/java/com/nuvio/tv/MainActivity.kt
-index 349a4f389..0ec8682b4 100644
+index 349a4f389..05dc7595e 100644
 --- a/app/src/main/java/com/nuvio/tv/MainActivity.kt
 +++ b/app/src/main/java/com/nuvio/tv/MainActivity.kt
 @@ -51,6 +51,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
@@ -416,6 +416,147 @@ index 349a4f389..0ec8682b4 100644
                              CompositionLocalProvider(LocalNavViewModelStoreOwner provides navViewModelStoreOwner) {
                                  if (modernSidebarEnabled) {
                                      ModernSidebarScaffold(
+@@ -1541,13 +1549,27 @@ private fun LegacySidebarScaffold(
+                     )
+ 
+                     if (isExpanded) {
++                        // Forbidden Vid: logo at the top of the sidebar…
+                         Column(
+                             modifier = Modifier
+                                 .align(Alignment.TopStart)
+                                 .fillMaxWidth()
+                         ) {
+                             Spacer(modifier = Modifier.height(30.dp))
+-                            if (showProfileSelector && activeProfileName.isNotEmpty()) {
++                            BrandWordmark(
++                                contentDescription = stringResource(R.string.app_name),
++                                modifier = Modifier
++                                    .fillMaxWidth()
++                                    .height(42.dp)
++                            )
++                        }
++                        // …and the profile picture at the bottom, under Settings.
++                        if (showProfileSelector && activeProfileName.isNotEmpty()) {
++                            Column(
++                                modifier = Modifier
++                                    .align(Alignment.BottomStart)
++                                    .fillMaxWidth()
++                            ) {
+                                 var isProfileFocused by remember { mutableStateOf(false) }
+                                 val profileItemShape = NuvioTheme.shapes.navItem
+                                 val profileLeadingInset = NuvioTheme.spacing.lg + NuvioTheme.spacing.xxs
+@@ -1592,13 +1614,7 @@ private fun LegacySidebarScaffold(
+                                         )
+                                     }
+                                 }
+-                            } else {
+-                                BrandWordmark(
+-                                    contentDescription = stringResource(R.string.app_name),
+-                                    modifier = Modifier
+-                                        .fillMaxWidth()
+-                                        .height(42.dp)
+-                                )
++                                Spacer(modifier = Modifier.height(30.dp))
+                             }
+                         }
+                     }
+diff --git a/app/src/main/java/com/nuvio/tv/ModernSidebarBlurPanel.kt b/app/src/main/java/com/nuvio/tv/ModernSidebarBlurPanel.kt
+index ba1fc44c4..063bce89e 100644
+--- a/app/src/main/java/com/nuvio/tv/ModernSidebarBlurPanel.kt
++++ b/app/src/main/java/com/nuvio/tv/ModernSidebarBlurPanel.kt
+@@ -114,7 +114,7 @@ internal fun ModernSidebarBlurPanel(
+     val borderBase = colors.Border
+     val isAmoledBlack = bgElevated == Color.Black
+     val panelBackgroundBrush = remember(blurEnabled, isAmoledBlack, bgElevated, bgCard) {
+-        val baseColor = if (isAmoledBlack) Color.Black else Color(0xFF161618)
++        val baseColor = if (isAmoledBlack) Color.Black else Color(0xFF0E1A16)
+         val alpha = when {
+             blurEnabled -> 0.65f
+             isAmoledBlack -> 1f
+@@ -152,41 +152,20 @@ internal fun ModernSidebarBlurPanel(
+             )
+             .padding(horizontal = NuvioTheme.spacing.md, vertical = NuvioTheme.spacing.lg - NuvioTheme.spacing.xxs)
+     ) {
+-        if (showProfileSelector && activeProfileName.isNotEmpty()) {
+-            Box(
+-                modifier = Modifier
+-                    .fillMaxWidth()
+-                    .offset(y = NuvioTheme.spacing.md),
+-                contentAlignment = Alignment.Center
+-            ) {
+-                SidebarProfileItem(
+-                    profileName = activeProfileName,
+-                    profileColorHex = activeProfileColorHex,
+-                    profileAvatarImageUrl = activeProfileAvatarImageUrl,
+-                    focusEnabled = keepSidebarFocusDuringCollapse,
+-                    labelAlpha = sidebarLabelAlpha,
+-                    onFocusChanged = { focused ->
+-                        if (focused) onDrawerItemFocused(drawerItems.size)
+-                    },
+-                    onClick = onSwitchProfile,
+-                    modifier = Modifier.fillMaxWidth(0.92f)
+-                )
+-            }
+-        } else {
+-            Box(
++        // Forbidden Vid: logo at the top; profile picture at the bottom under Settings.
++        Box(
++            modifier = Modifier
++                .fillMaxWidth()
++                .offset(y = NuvioTheme.spacing.md),
++            contentAlignment = Alignment.Center
++        ) {
++            BrandWordmark(
++                contentDescription = stringResource(R.string.app_name),
+                 modifier = Modifier
+-                    .fillMaxWidth()
+-                    .offset(y = NuvioTheme.spacing.md),
+-                contentAlignment = Alignment.Center
+-            ) {
+-                BrandWordmark(
+-                    contentDescription = stringResource(R.string.app_name),
+-                    modifier = Modifier
+-                        .fillMaxWidth(0.72f)
+-                        .height(36.dp),
+-                    alpha = sidebarLabelAlpha
+-                )
+-            }
++                    .fillMaxWidth(0.72f)
++                    .height(36.dp),
++                alpha = sidebarLabelAlpha
++            )
+         }
+ 
+         Spacer(modifier = Modifier.height(NuvioTheme.spacing.lg))
+@@ -226,6 +205,28 @@ internal fun ModernSidebarBlurPanel(
+                 }
+             }
+         }
++
++        if (showProfileSelector && activeProfileName.isNotEmpty()) {
++            Box(
++                modifier = Modifier
++                    .fillMaxWidth()
++                    .offset(y = -NuvioTheme.spacing.md),
++                contentAlignment = Alignment.Center
++            ) {
++                SidebarProfileItem(
++                    profileName = activeProfileName,
++                    profileColorHex = activeProfileColorHex,
++                    profileAvatarImageUrl = activeProfileAvatarImageUrl,
++                    focusEnabled = keepSidebarFocusDuringCollapse,
++                    labelAlpha = sidebarLabelAlpha,
++                    onFocusChanged = { focused ->
++                        if (focused) onDrawerItemFocused(drawerItems.size)
++                    },
++                    onClick = onSwitchProfile,
++                    modifier = Modifier.fillMaxWidth(0.92f)
++                )
++            }
++        }
+     }
+ }
+ 
 diff --git a/app/src/main/java/com/nuvio/tv/core/kids/KidsCatalogService.kt b/app/src/main/java/com/nuvio/tv/core/kids/KidsCatalogService.kt
 new file mode 100644
 index 000000000..f1a7007c3
@@ -814,7 +955,7 @@ index 000000000..94ae0c8c6
 +    }
 +}
 diff --git a/app/src/main/java/com/nuvio/tv/core/profile/ProfileManager.kt b/app/src/main/java/com/nuvio/tv/core/profile/ProfileManager.kt
-index e66b4535f..83932ab9e 100644
+index e66b4535f..b27a24b58 100644
 --- a/app/src/main/java/com/nuvio/tv/core/profile/ProfileManager.kt
 +++ b/app/src/main/java/com/nuvio/tv/core/profile/ProfileManager.kt
 @@ -1,6 +1,7 @@
@@ -839,6 +980,17 @@ index e66b4535f..83932ab9e 100644
      private suspend fun removeLocalProfileData(id: Int) {
          if (id == 1) return
          credentialStores.forEach { store -> store.removeProfile(id) }
+@@ -140,7 +148,9 @@ class ProfileManager @Inject constructor(
+ 
+     suspend fun updateProfile(profile: UserProfile): Boolean {
+         if (profiles.value.none { it.id == profile.id }) return false
+-        profileDataStore.upsertProfile(profile)
++        profileDataStore.upsertProfile(
++            if (profile.id == 1) profile else profile.copy(usesPrimaryAddons = true, usesPrimaryPlugins = true)
++        )
+         return true
+     }
+ 
 diff --git a/app/src/main/java/com/nuvio/tv/data/local/ProfileDataStore.kt b/app/src/main/java/com/nuvio/tv/data/local/ProfileDataStore.kt
 index 1d0da5b7e..d82e26a76 100644
 --- a/app/src/main/java/com/nuvio/tv/data/local/ProfileDataStore.kt
@@ -1755,7 +1907,7 @@ index 5993b786e..e19d48cfc 100644
                          text = stringResource(R.string.profile_cancel),
                          isPrimary = true,
 diff --git a/app/src/main/java/com/nuvio/tv/ui/screens/profile/ProfileSelectionViewModel.kt b/app/src/main/java/com/nuvio/tv/ui/screens/profile/ProfileSelectionViewModel.kt
-index ebee289f3..da8456706 100644
+index ebee289f3..6782ec99a 100644
 --- a/app/src/main/java/com/nuvio/tv/ui/screens/profile/ProfileSelectionViewModel.kt
 +++ b/app/src/main/java/com/nuvio/tv/ui/screens/profile/ProfileSelectionViewModel.kt
 @@ -51,7 +51,8 @@ class ProfileSelectionViewModel @Inject constructor(
@@ -1808,7 +1960,7 @@ index ebee289f3..da8456706 100644
                  profileManager.setActiveProfile(id)
                  onComplete()
              } catch (error: CancellationException) {
-@@ -188,6 +217,7 @@ class ProfileSelectionViewModel @Inject constructor(
+@@ -188,26 +217,31 @@ class ProfileSelectionViewModel @Inject constructor(
          avatarId: String? = null,
          copyFromProfileId: Int? = null,
          copyProviderCredentials: Boolean = false,
@@ -1816,7 +1968,15 @@ index ebee289f3..da8456706 100644
          onComplete: (CreateProfileResult) -> Unit = {}
      ) {
          if (_isCreating.value) return
-@@ -200,14 +230,15 @@ class ProfileSelectionViewModel @Inject constructor(
+         viewModelScope.launch {
+             _isCreating.value = true
+             val result = try {
++                // Forbidden Vid: every new profile uses the primary profile's addons and plugins.
+                 val profile = profileManager.createProfile(
+                     name = name,
+                     avatarColorHex = avatarColorHex,
++                    usesPrimaryAddons = true,
++                    usesPrimaryPlugins = true,
                      avatarId = avatarId
                  )
                  if (profile != null) {
@@ -2021,11 +2181,24 @@ index 000000000..717422cba
 +        }
 +    }
 +}
+diff --git a/app/src/main/java/com/nuvio/tv/ui/screens/settings/ProfileSettingsViewModel.kt b/app/src/main/java/com/nuvio/tv/ui/screens/settings/ProfileSettingsViewModel.kt
+index 78935e68b..8ca34a894 100644
+--- a/app/src/main/java/com/nuvio/tv/ui/screens/settings/ProfileSettingsViewModel.kt
++++ b/app/src/main/java/com/nuvio/tv/ui/screens/settings/ProfileSettingsViewModel.kt
+@@ -46,6 +46,8 @@ class ProfileSettingsViewModel @Inject constructor(
+             val newProfile = profileManager.createProfile(
+                 name = name,
+                 avatarColorHex = avatarColorHex,
++                usesPrimaryAddons = true,
++                usesPrimaryPlugins = true,
+                 avatarId = avatarId
+             )
+             if (newProfile != null) {
 diff --git a/app/src/main/java/com/nuvio/tv/ui/screens/settings/SettingsCatalog.kt b/app/src/main/java/com/nuvio/tv/ui/screens/settings/SettingsCatalog.kt
-index e7df43304..448eb97d9 100644
+index e7df43304..245b92034 100644
 --- a/app/src/main/java/com/nuvio/tv/ui/screens/settings/SettingsCatalog.kt
 +++ b/app/src/main/java/com/nuvio/tv/ui/screens/settings/SettingsCatalog.kt
-@@ -31,12 +31,13 @@ internal fun visibleSettingsCategories(
+@@ -31,12 +31,15 @@ internal fun visibleSettingsCategories(
      isWatchPartyAvailable: Boolean = false
  ): List<SettingsCategory> = SettingsCategory.entries.filter { category ->
      when (category) {
@@ -2033,6 +2206,8 @@ index e7df43304..448eb97d9 100644
          SettingsCategory.ACCOUNT,
          SettingsCategory.PROFILES -> isPrimaryProfile
 -        SettingsCategory.WATCH_PARTY -> isWatchPartyAvailable
++        // Shown as "Trakt": sign in to a Trakt account.
++        SettingsCategory.TRACKING -> isPrimaryProfile
 +        // Shown as "Updates" (check for a newer Forbidden Vid build).
 +        SettingsCategory.ABOUT -> isPrimaryProfile && com.nuvio.tv.core.build.AppFeaturePolicy.inAppUpdatesEnabled
          SettingsCategory.DEBUG -> isDebugBuild && !isEssentialMode
@@ -2043,7 +2218,7 @@ index e7df43304..448eb97d9 100644
  }
  
 diff --git a/app/src/main/java/com/nuvio/tv/ui/screens/settings/SettingsScreen.kt b/app/src/main/java/com/nuvio/tv/ui/screens/settings/SettingsScreen.kt
-index 9f75a94a0..a863dd261 100644
+index 9f75a94a0..9a3d67471 100644
 --- a/app/src/main/java/com/nuvio/tv/ui/screens/settings/SettingsScreen.kt
 +++ b/app/src/main/java/com/nuvio/tv/ui/screens/settings/SettingsScreen.kt
 @@ -37,6 +37,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
@@ -2054,9 +2229,12 @@ index 9f75a94a0..a863dd261 100644
  import androidx.compose.material.icons.rounded.Groups
  import androidx.compose.material.icons.rounded.PlayArrow
  import androidx.compose.material.icons.filled.BugReport
-@@ -164,7 +165,7 @@ private fun settingsSectionSpec(category: SettingsCategory): SettingsSectionSpec
+@@ -162,9 +163,9 @@ private fun settingsSectionSpec(category: SettingsCategory): SettingsSectionSpec
+     SettingsCategory.CONTENT_DISCOVERY -> SettingsSectionSpec(category, stringResource(R.string.settings_content_discovery), Icons.Default.Explore, destination = SettingsSectionDestination.Inline)
+     SettingsCategory.PLAYBACK -> SettingsSectionSpec(category, stringResource(R.string.settings_playback), Icons.Rounded.PlayArrow, destination = SettingsSectionDestination.Inline)
      SettingsCategory.INTEGRATION -> SettingsSectionSpec(category, stringResource(R.string.settings_integration), Icons.Default.Link, destination = SettingsSectionDestination.Inline)
-     SettingsCategory.TRACKING -> SettingsSectionSpec(category, stringResource(R.string.settings_tracking_title), Icons.Default.Sync, destination = SettingsSectionDestination.Inline)
+-    SettingsCategory.TRACKING -> SettingsSectionSpec(category, stringResource(R.string.settings_tracking_title), Icons.Default.Sync, destination = SettingsSectionDestination.Inline)
++    SettingsCategory.TRACKING -> SettingsSectionSpec(category, "Trakt", Icons.Default.Sync, destination = SettingsSectionDestination.Inline)
      SettingsCategory.ADVANCED -> SettingsSectionSpec(category, stringResource(R.string.settings_advanced), Icons.Default.Build, destination = SettingsSectionDestination.Inline)
 -    SettingsCategory.ABOUT -> SettingsSectionSpec(category, stringResource(R.string.about_title), Icons.Default.Info, destination = SettingsSectionDestination.Inline)
 +    SettingsCategory.ABOUT -> SettingsSectionSpec(category, "Updates", Icons.Default.SystemUpdate, destination = SettingsSectionDestination.Inline)
@@ -2074,6 +2252,27 @@ index 9f75a94a0..a863dd261 100644
              initialFocusRequester = if (allowDetailAutofocus) {
                  contentFocusRequesters[SettingsCategory.ABOUT]
              } else {
+diff --git a/app/src/main/java/com/nuvio/tv/ui/screens/settings/TrackingSettingsScreen.kt b/app/src/main/java/com/nuvio/tv/ui/screens/settings/TrackingSettingsScreen.kt
+index 5e4ba5762..24af8010a 100644
+--- a/app/src/main/java/com/nuvio/tv/ui/screens/settings/TrackingSettingsScreen.kt
++++ b/app/src/main/java/com/nuvio/tv/ui/screens/settings/TrackingSettingsScreen.kt
+@@ -534,6 +534,8 @@ internal fun TrackingSettingsOverview(
+                                 .focusRequester(traktFocusRequester)
+                                 .testTag(TrackingSettingsTestTags.TRAKT_PROVIDER)
+                         )
++                        // Forbidden Vid: only Trakt is offered.
++                        if (false) {
+                         SettingsActionRow(
+                             title = stringResource(R.string.simkl_name),
+                             subtitle = simklPresentation.subtitle,
+@@ -558,6 +560,7 @@ internal fun TrackingSettingsOverview(
+                                 .focusRequester(mdbListFocusRequester)
+                                 .testTag(TrackingSettingsTestTags.MDBLIST_PROVIDER)
+                         )
++                        }
+                     }
+                 }
+                 item(key = "tracking_sources") {
 diff --git a/app/src/main/java/com/nuvio/tv/ui/theme/ThemeColors.kt b/app/src/main/java/com/nuvio/tv/ui/theme/ThemeColors.kt
 index fae3dfe69..845b6c753 100644
 --- a/app/src/main/java/com/nuvio/tv/ui/theme/ThemeColors.kt
