@@ -32,10 +32,19 @@ index bc5add087..dc035691e 100644
  
      flavorDimensions += "distribution"
 diff --git a/app/src/full/AndroidManifest.xml b/app/src/full/AndroidManifest.xml
-index ffd100a9e..e7e513907 100644
+index ffd100a9e..65d6a7024 100644
 --- a/app/src/full/AndroidManifest.xml
 +++ b/app/src/full/AndroidManifest.xml
-@@ -13,5 +13,14 @@
+@@ -3,6 +3,8 @@
+ 
+     <!-- Lets the in-app updater install its own updates without a confirmation screen on Android 12+. -->
+     <uses-permission android:name="android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION" />
++    <!-- Forbidden Vid: lets the app reopen itself after an update installs. -->
++    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+ 
+     <application>
+         <service
+@@ -13,5 +15,14 @@
          <receiver
              android:name=".updater.UpdateInstallResultReceiver"
              android:exported="false" />
@@ -277,7 +286,7 @@ index 52b648362..0d7b5ba07 100644
 +    }
 +}
 diff --git a/app/src/main/java/com/nuvio/tv/MainActivity.kt b/app/src/main/java/com/nuvio/tv/MainActivity.kt
-index 349a4f389..5cf7b7474 100644
+index 349a4f389..020ecbc76 100644
 --- a/app/src/main/java/com/nuvio/tv/MainActivity.kt
 +++ b/app/src/main/java/com/nuvio/tv/MainActivity.kt
 @@ -51,6 +51,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
@@ -376,7 +385,22 @@ index 349a4f389..5cf7b7474 100644
                          }
                      }
                      val selectedDrawerRoute = drawerItems.firstOrNull { item ->
-@@ -1166,7 +1143,38 @@ open class MainActivity : ComponentActivity() {
+@@ -1147,11 +1124,12 @@ open class MainActivity : ComponentActivity() {
+                         showBanner = updateState.showBanner && currentRoute?.startsWith("player/") != true
+                     )
+ 
++                    val relaunchGate = com.nuvio.tv.core.build.rememberRelaunchPermissionGate()
+                     UpdateBannerHost(
+                         state = updateBannerState,
+                         onDismissBanner = updateViewModel::dismissBanner,
+-                        onDownload = updateViewModel::downloadUpdate,
+-                        onInstall = updateViewModel::installUpdateOrRequestPermission,
++                        onDownload = { relaunchGate { updateViewModel.downloadUpdate() } },
++                        onInstall = { relaunchGate { updateViewModel.installUpdateOrRequestPermission() } },
+                         onDismissUnknownSources = updateViewModel::dismissUnknownSourcesDialog,
+                         onOpenUnknownSources = updateViewModel::openUnknownSourcesSettings,
+                         onFeedbackShown = updateViewModel::consumeFeedbackMessage
+@@ -1166,7 +1144,38 @@ open class MainActivity : ComponentActivity() {
                              focusedSplashTheme = null
                              hasSelectedProfileThisSession = false
                          }
@@ -416,7 +440,7 @@ index 349a4f389..5cf7b7474 100644
                              CompositionLocalProvider(LocalNavViewModelStoreOwner provides navViewModelStoreOwner) {
                                  if (modernSidebarEnabled) {
                                      ModernSidebarScaffold(
-@@ -1541,13 +1549,21 @@ private fun LegacySidebarScaffold(
+@@ -1541,13 +1550,21 @@ private fun LegacySidebarScaffold(
                      )
  
                      if (isExpanded) {
@@ -439,7 +463,7 @@ index 349a4f389..5cf7b7474 100644
                                  var isProfileFocused by remember { mutableStateOf(false) }
                                  val profileItemShape = NuvioTheme.shapes.navItem
                                  val profileLeadingInset = NuvioTheme.spacing.lg + NuvioTheme.spacing.xxs
-@@ -1592,13 +1608,6 @@ private fun LegacySidebarScaffold(
+@@ -1592,13 +1609,6 @@ private fun LegacySidebarScaffold(
                                          )
                                      }
                                  }
@@ -517,6 +541,85 @@ index ba1fc44c4..5a51d2a88 100644
          }
  
          Spacer(modifier = Modifier.height(NuvioTheme.spacing.lg))
+diff --git a/app/src/main/java/com/nuvio/tv/core/build/FvRelaunchPermission.kt b/app/src/main/java/com/nuvio/tv/core/build/FvRelaunchPermission.kt
+new file mode 100644
+index 000000000..bdb20890c
+--- /dev/null
++++ b/app/src/main/java/com/nuvio/tv/core/build/FvRelaunchPermission.kt
+@@ -0,0 +1,73 @@
++package com.nuvio.tv.core.build
++
++import android.content.Context
++import android.content.Intent
++import android.net.Uri
++import android.os.Build
++import android.provider.Settings
++import android.widget.Toast
++import androidx.activity.compose.rememberLauncherForActivityResult
++import androidx.activity.result.contract.ActivityResultContracts
++import androidx.compose.runtime.Composable
++import androidx.compose.runtime.remember
++import androidx.compose.ui.platform.LocalContext
++
++/**
++ * Forbidden Vid: Android only lets an app reopen itself after an update if it has the
++ * "Display over other apps" permission. Before the first update we ask for it once.
++ */
++object FvRelaunchPermission {
++    private const val PREFS = "fv_relaunch_permission"
++    private const val KEY_ASKED = "asked"
++
++    fun isGranted(context: Context): Boolean =
++        Build.VERSION.SDK_INT < Build.VERSION_CODES.Q || Settings.canDrawOverlays(context)
++
++    fun shouldAsk(context: Context): Boolean =
++        !isGranted(context) &&
++            !context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_ASKED, false)
++
++    fun markAsked(context: Context) {
++        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(KEY_ASKED, true).apply()
++    }
++
++    fun settingsIntent(context: Context): Intent =
++        Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${context.packageName}"))
++}
++
++private class PendingAction { var action: (() -> Unit)? = null }
++
++/**
++ * Returns a function that runs an update action, first asking (once) for the permission
++ * that lets the app reopen itself after installing. The action runs when the person comes back.
++ */
++@Composable
++fun rememberRelaunchPermissionGate(): ((() -> Unit) -> Unit) {
++    val context = LocalContext.current
++    val pending = remember { PendingAction() }
++    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
++        pending.action?.invoke()
++        pending.action = null
++    }
++    return remember(launcher) {
++        { action: () -> Unit ->
++            if (FvRelaunchPermission.shouldAsk(context)) {
++                FvRelaunchPermission.markAsked(context)
++                pending.action = action
++                val opened = runCatching { launcher.launch(FvRelaunchPermission.settingsIntent(context)) }.isSuccess
++                if (opened) {
++                    Toast.makeText(
++                        context,
++                        "Turn on \"Display over other apps\" so Forbidden Vid can reopen itself after updating, then go back.",
++                        Toast.LENGTH_LONG
++                    ).show()
++                } else {
++                    pending.action = null
++                    action()
++                }
++            } else {
++                action()
++            }
++        }
++    }
++}
 diff --git a/app/src/main/java/com/nuvio/tv/core/kids/KidsCatalogService.kt b/app/src/main/java/com/nuvio/tv/core/kids/KidsCatalogService.kt
 new file mode 100644
 index 000000000..6f7e6aa9f
@@ -1780,10 +1883,10 @@ index f2ca5dec4..cf2e1820f 100644
              }
 diff --git a/app/src/main/java/com/nuvio/tv/ui/screens/kids/KidsScreens.kt b/app/src/main/java/com/nuvio/tv/ui/screens/kids/KidsScreens.kt
 new file mode 100644
-index 000000000..4a37b5ee6
+index 000000000..fd9076e08
 --- /dev/null
 +++ b/app/src/main/java/com/nuvio/tv/ui/screens/kids/KidsScreens.kt
-@@ -0,0 +1,307 @@
+@@ -0,0 +1,327 @@
 +@file:OptIn(ExperimentalTvMaterial3Api::class)
 +
 +package com.nuvio.tv.ui.screens.kids
@@ -1808,6 +1911,8 @@ index 000000000..4a37b5ee6
 +import androidx.compose.foundation.shape.RoundedCornerShape
 +import androidx.compose.runtime.Composable
 +import androidx.compose.runtime.LaunchedEffect
++import com.nuvio.tv.ui.screens.detail.requestFocusAfterFrames
++import androidx.compose.foundation.lazy.grid.itemsIndexed
 +import androidx.compose.runtime.collectAsState
 +import androidx.compose.runtime.getValue
 +import com.nuvio.tv.domain.model.MetaPreview
@@ -2006,6 +2111,32 @@ index 000000000..4a37b5ee6
 +        genreRowState.scrollToItem(0)
 +        focused = null
 +    }
++    // Load more automatically as you scroll near the bottom (no button needed).
++    LaunchedEffect(gridState, state.items.size, state.canLoadMore, state.loading) {
++        androidx.compose.runtime.snapshotFlow {
++            val info = gridState.layoutInfo
++            val last = info.visibleItemsInfo.lastOrNull()?.index ?: -1
++            last >= info.totalItemsCount - 12
++        }.collect { nearEnd ->
++            if (nearEnd && state.canLoadMore && !state.loading && state.items.isNotEmpty()) viewModel.loadMore()
++        }
++    }
++    // Highlight the first movie / show when the page opens.
++    val firstItemFocus = remember { androidx.compose.ui.focus.FocusRequester() }
++    var firstFocusDone by remember(type) { mutableStateOf(false) }
++    val firstItemId = state.items.firstOrNull()?.id
++    LaunchedEffect(type, firstItemId) {
++        if (firstItemId == null || firstFocusDone) return@LaunchedEffect
++        gridState.scrollToItem(0)
++        // Give the grid a moment to show the poster, then try a few times in case it's still settling.
++        repeat(5) {
++            if (firstItemFocus.requestFocusAfterFrames(frames = 3)) {
++                firstFocusDone = true
++                return@LaunchedEffect
++            }
++            kotlinx.coroutines.delay(150)
++        }
++    }
 +
 +    Column(modifier = Modifier.fillMaxSize().background(NuvioTheme.colors.Background)) {
 +        KidsHero(
@@ -2047,10 +2178,11 @@ index 000000000..4a37b5ee6
 +                    KidsMessage("Kids content needs a ratings source.")
 +                }
 +            }
-+            items(state.items, key = { it.id }) { item ->
++            itemsIndexed(state.items, key = { _, it -> it.id }) { index, item ->
 +                Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.TopCenter) {
 +                    ContentCard(
 +                        item = item,
++                        focusRequester = if (index == 0) firstItemFocus else null,
 +                        posterCardStyle = KIDS_GRID_POSTER,
 +                        onFocus = { focused = it },
 +                        onClick = { onNavigateToDetail(item.id, item.rawType) }
@@ -2062,16 +2194,7 @@ index 000000000..4a37b5ee6
 +                    when {
 +                        state.loading -> KidsMessage("Loading…")
 +                        state.items.isEmpty() -> KidsMessage("Nothing here yet")
-+                        state.canLoadMore -> Button(
-+                            onClick = { viewModel.loadMore() },
-+                            colors = ButtonDefaults.colors(
-+                                containerColor = NuvioTheme.colors.BackgroundCard,
-+                                contentColor = NuvioTheme.colors.TextPrimary,
-+                                focusedContainerColor = NuvioTheme.colors.Secondary,
-+                                focusedContentColor = NuvioTheme.colors.OnSecondary
-+                            ),
-+                            shape = ButtonDefaults.shape(RoundedCornerShape(50))
-+                        ) { Text("Load more") }
++
 +                    }
 +                }
 +            }
@@ -2677,10 +2800,10 @@ index aba7ae79b..bfedfe53f 100644
                  selectedValue = uiState.selectedDiscoverCatalogKey,
 diff --git a/app/src/main/java/com/nuvio/tv/ui/screens/settings/ForbiddenUpdatesSettingsContent.kt b/app/src/main/java/com/nuvio/tv/ui/screens/settings/ForbiddenUpdatesSettingsContent.kt
 new file mode 100644
-index 000000000..717422cba
+index 000000000..b9f8a171a
 --- /dev/null
 +++ b/app/src/main/java/com/nuvio/tv/ui/screens/settings/ForbiddenUpdatesSettingsContent.kt
-@@ -0,0 +1,72 @@
+@@ -0,0 +1,73 @@
 +@file:OptIn(ExperimentalTvMaterial3Api::class)
 +
 +package com.nuvio.tv.ui.screens.settings
@@ -2713,6 +2836,7 @@ index 000000000..717422cba
 +    val context = LocalContext.current
 +    val viewModel: UpdateViewModel = hiltViewModel(context as ComponentActivity)
 +    val state by viewModel.uiState.collectAsStateWithLifecycle()
++    val relaunchGate = com.nuvio.tv.core.build.rememberRelaunchPermissionGate()
 +
 +    Column(
 +        modifier = Modifier.fillMaxSize(),
@@ -2748,7 +2872,7 @@ index 000000000..717422cba
 +                subtitle = "Downloads the newest Forbidden Vid build, installs it over this one, then reopens the app",
 +                trailingIcon = Icons.Default.SystemUpdate,
 +                enabled = !state.isChecking && !state.isDownloading,
-+                onClick = { viewModel.reinstallLatest() }
++                onClick = { relaunchGate { viewModel.reinstallLatest() } }
 +            )
 +        }
 +    }
