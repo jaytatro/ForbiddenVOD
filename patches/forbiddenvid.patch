@@ -1780,10 +1780,10 @@ index f2ca5dec4..cf2e1820f 100644
              }
 diff --git a/app/src/main/java/com/nuvio/tv/ui/screens/kids/KidsScreens.kt b/app/src/main/java/com/nuvio/tv/ui/screens/kids/KidsScreens.kt
 new file mode 100644
-index 000000000..4031963f4
+index 000000000..4a37b5ee6
 --- /dev/null
 +++ b/app/src/main/java/com/nuvio/tv/ui/screens/kids/KidsScreens.kt
-@@ -0,0 +1,284 @@
+@@ -0,0 +1,307 @@
 +@file:OptIn(ExperimentalTvMaterial3Api::class)
 +
 +package com.nuvio.tv.ui.screens.kids
@@ -1796,6 +1796,7 @@ index 000000000..4031963f4
 +import androidx.compose.foundation.layout.Row
 +import androidx.compose.foundation.layout.fillMaxSize
 +import androidx.compose.foundation.layout.fillMaxWidth
++import androidx.compose.foundation.layout.height
 +import androidx.compose.foundation.layout.padding
 +import androidx.compose.foundation.lazy.LazyColumn
 +import androidx.compose.foundation.lazy.LazyRow
@@ -1826,6 +1827,13 @@ index 000000000..4031963f4
 +import com.nuvio.tv.ui.theme.NuvioTheme
 +
 +private val KIDS_START = 40.dp
++
++/** Smaller posters on the kids Movies / TV Series pages so whole rows fit on screen. */
++private val KIDS_GRID_POSTER = com.nuvio.tv.ui.components.PosterCardStyle(
++    width = 108.dp,
++    height = 162.dp,
++    focusedScale = 1.06f
++)
 +
 +/**
 + * Forbidden Vid: on a kids profile, show [kidsContent]; otherwise [normalContent].
@@ -1940,19 +1948,21 @@ index 000000000..4031963f4
 +                )
 +            )
 +        )
++        // Text starts below the TV's safe area at the top, so nothing is cut off by the screen edge.
 +        Column(
 +            modifier = Modifier
-+                .align(Alignment.BottomStart)
-+                .padding(start = KIDS_START, end = 64.dp, bottom = 10.dp)
++                .align(Alignment.TopStart)
++                .padding(start = KIDS_START, end = 64.dp, top = 32.dp, bottom = 8.dp)
 +                .fillMaxWidth(0.6f),
-+            verticalArrangement = Arrangement.spacedBy(6.dp)
++            verticalArrangement = Arrangement.spacedBy(4.dp)
 +        ) {
 +            Text(text = ratingsLine, style = MaterialTheme.typography.labelMedium, color = NuvioTheme.colors.Secondary)
 +            Text(
 +                text = item?.name ?: fallbackTitle,
 +                style = MaterialTheme.typography.headlineMedium,
 +                color = NuvioTheme.colors.TextPrimary,
-+                maxLines = 2
++                maxLines = 1,
++                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
 +            )
 +            if (item != null) {
 +                val facts = listOfNotNull(
@@ -1967,7 +1977,7 @@ index 000000000..4031963f4
 +                        text = it,
 +                        style = MaterialTheme.typography.bodyMedium,
 +                        color = NuvioTheme.colors.TextPrimary.copy(alpha = 0.85f),
-+                        maxLines = 3,
++                        maxLines = 2,
 +                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
 +                    )
 +                }
@@ -1988,17 +1998,26 @@ index 000000000..4031963f4
 +    val tierState by viewModel.tier.collectAsState()
 +    LaunchedEffect(type) { viewModel.startBrowse(type, state.genre) }
 +    var focused by remember { mutableStateOf<MetaPreview?>(null) }
++    val gridState = androidx.compose.foundation.lazy.grid.rememberLazyGridState()
++    val genreRowState = androidx.compose.foundation.lazy.rememberLazyListState()
++    // Always open at the top of the list, and go back to the top when the category changes.
++    LaunchedEffect(type, state.genre) {
++        gridState.scrollToItem(0)
++        genreRowState.scrollToItem(0)
++        focused = null
++    }
 +
 +    Column(modifier = Modifier.fillMaxSize().background(NuvioTheme.colors.Background)) {
 +        KidsHero(
 +            ratingsLine = tierState?.ratingsLine.orEmpty(),
 +            item = focused ?: state.items.firstOrNull(),
 +            fallbackTitle = title,
-+            modifier = Modifier.fillMaxWidth().weight(0.36f)
++            modifier = Modifier.fillMaxWidth().height(190.dp)
 +        )
 +        LazyRow(
++            state = genreRowState,
 +            horizontalArrangement = Arrangement.spacedBy(10.dp),
-+            contentPadding = PaddingValues(start = KIDS_START, end = 64.dp, top = 4.dp, bottom = 8.dp)
++            contentPadding = PaddingValues(start = KIDS_START, end = 64.dp, top = 6.dp, bottom = 6.dp)
 +        ) {
 +            items(genres, key = { it.label }) { genre ->
 +                val selected = genre.id == state.genre
@@ -2015,12 +2034,13 @@ index 000000000..4031963f4
 +            }
 +        }
 +        LazyVerticalGrid(
-+            columns = GridCells.Adaptive(minSize = 150.dp),
-+            modifier = Modifier.fillMaxWidth().weight(0.64f),
-+            // Padding on all sides so highlighted posters aren't clipped by the screen edge or the sidebar.
-+            contentPadding = PaddingValues(start = KIDS_START, end = 64.dp, top = 14.dp, bottom = 56.dp),
-+            horizontalArrangement = Arrangement.spacedBy(20.dp),
-+            verticalArrangement = Arrangement.spacedBy(24.dp)
++            state = gridState,
++            columns = GridCells.Adaptive(minSize = KIDS_GRID_POSTER.width + 14.dp),
++            modifier = Modifier.fillMaxWidth().weight(1f),
++            // Room on every side so a highlighted (slightly bigger) poster is never clipped.
++            contentPadding = PaddingValues(start = KIDS_START, end = 64.dp, top = 22.dp, bottom = 64.dp),
++            horizontalArrangement = Arrangement.spacedBy(14.dp),
++            verticalArrangement = Arrangement.spacedBy(22.dp)
 +        ) {
 +            if (!viewModel.hasRatingsSource) {
 +                item(span = { GridItemSpan(maxLineSpan) }, key = "nokey") {
@@ -2028,11 +2048,14 @@ index 000000000..4031963f4
 +                }
 +            }
 +            items(state.items, key = { it.id }) { item ->
-+                ContentCard(
-+                    item = item,
-+                    onFocus = { focused = it },
-+                    onClick = { onNavigateToDetail(item.id, item.rawType) }
-+                )
++                Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.TopCenter) {
++                    ContentCard(
++                        item = item,
++                        posterCardStyle = KIDS_GRID_POSTER,
++                        onFocus = { focused = it },
++                        onClick = { onNavigateToDetail(item.id, item.rawType) }
++                    )
++                }
 +            }
 +            item(span = { GridItemSpan(maxLineSpan) }, key = "more") {
 +                Box(Modifier.fillMaxWidth().padding(top = 8.dp), contentAlignment = Alignment.Center) {
