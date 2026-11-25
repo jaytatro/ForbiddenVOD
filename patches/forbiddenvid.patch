@@ -519,10 +519,10 @@ index ba1fc44c4..5a51d2a88 100644
          Spacer(modifier = Modifier.height(NuvioTheme.spacing.lg))
 diff --git a/app/src/main/java/com/nuvio/tv/core/kids/KidsCatalogService.kt b/app/src/main/java/com/nuvio/tv/core/kids/KidsCatalogService.kt
 new file mode 100644
-index 000000000..f1a7007c3
+index 000000000..6f7e6aa9f
 --- /dev/null
 +++ b/app/src/main/java/com/nuvio/tv/core/kids/KidsCatalogService.kt
-@@ -0,0 +1,151 @@
+@@ -0,0 +1,166 @@
 +package com.nuvio.tv.core.kids
 +
 +import android.content.Context
@@ -546,14 +546,15 @@ index 000000000..f1a7007c3
 +
 +/**
 + * Forbidden Vid kids-only catalogs, built straight from TMDB:
-+ * movies rated PG / PG-13 and shows rated TV-Y / TV-Y7 / TV-G / TV-PG (US ratings).
++ * only the US movie and TV ratings allowed by the profile's age level (KidsTier).
 + * Every title's rating is checked again before it is shown.
 + */
 +@Singleton
 +class KidsCatalogService @Inject constructor(
 +    @ApplicationContext context: Context,
 +    private val tmdbApi: TmdbApi,
-+    private val kidsContentFilter: KidsContentFilter
++    private val kidsContentFilter: KidsContentFilter,
++    private val kidsProfileStore: KidsProfileStore
 +) {
 +    private val prefs = context.getSharedPreferences("fv_kids_catalog", Context.MODE_PRIVATE)
 +    private val memory = ConcurrentHashMap<String, String>()
@@ -568,21 +569,35 @@ index 000000000..f1a7007c3
 +
 +    suspend fun movies(genreId: Int?, page: Int): List<MetaPreview> {
 +        val key = BuildConfig.TMDB_API_KEY.takeIf { it.isNotBlank() } ?: return emptyList()
++        val tier = kidsProfileStore.activeTierNow() ?: return emptyList()
 +        val results = runCatching {
-+            tmdbApi.discoverKidsMovies(apiKey = key, withGenres = genreId?.toString(), page = page).body()?.results
++            tmdbApi.discoverKidsMovies(
++                apiKey = key,
++                certification = tier.movieCertifications,
++                voteCountGte = if (tier == KidsTier.AGES_0_4 || tier == KidsTier.AGES_4_6) 20 else 50,
++                withGenres = genreId?.toString(),
++                page = page
++            ).body()?.results
 +        }.getOrNull().orEmpty()
-+        return verified(results, isTv = false, key = key)
++        return verified(results, isTv = false, key = key, tier = tier)
 +    }
 +
 +    suspend fun tv(genreId: Int?, page: Int): List<MetaPreview> {
 +        val key = BuildConfig.TMDB_API_KEY.takeIf { it.isNotBlank() } ?: return emptyList()
++        val tier = kidsProfileStore.activeTierNow() ?: return emptyList()
 +        val results = runCatching {
-+            tmdbApi.discoverKidsTv(apiKey = key, withGenres = genreId?.toString(), page = page).body()?.results
++            tmdbApi.discoverKidsTv(
++                apiKey = key,
++                certification = tier.tvCertifications,
++                voteCountGte = if (tier == KidsTier.AGES_0_4 || tier == KidsTier.AGES_4_6) 5 else 20,
++                withGenres = genreId?.toString(),
++                page = page
++            ).body()?.results
 +        }.getOrNull().orEmpty()
-+        return verified(results, isTv = true, key = key)
++        return verified(results, isTv = true, key = key, tier = tier)
 +    }
 +
-+    private suspend fun verified(results: List<TmdbDiscoverResult>, isTv: Boolean, key: String): List<MetaPreview> =
++    private suspend fun verified(results: List<TmdbDiscoverResult>, isTv: Boolean, key: String, tier: KidsTier): List<MetaPreview> =
 +        coroutineScope {
 +            results.map { result ->
 +                async {
@@ -590,7 +605,7 @@ index 000000000..f1a7007c3
 +                        try {
 +                            if (!isTv && result.genreIds.orEmpty().contains(HORROR_GENRE)) return@withPermit null
 +                            val rating = usRating(result.id, isTv, key) ?: return@withPermit null
-+                            if (rating !in KidsContentFilter.ALLOWED) return@withPermit null
++                            if (KidsContentFilter.normalize(rating) !in tier.allowed) return@withPermit null
 +                            if (isHorror(result.id, isTv, key)) return@withPermit null
 +                            val imdb = imdbId(result.id, isTv, key)
 +                            toPreview(result, isTv, imdb, rating)
@@ -676,7 +691,7 @@ index 000000000..f1a7007c3
 +}
 diff --git a/app/src/main/java/com/nuvio/tv/core/kids/KidsContentFilter.kt b/app/src/main/java/com/nuvio/tv/core/kids/KidsContentFilter.kt
 new file mode 100644
-index 000000000..4249c83c8
+index 000000000..cff3095d6
 --- /dev/null
 +++ b/app/src/main/java/com/nuvio/tv/core/kids/KidsContentFilter.kt
 @@ -0,0 +1,132 @@
@@ -698,8 +713,8 @@ index 000000000..4249c83c8
 +import javax.inject.Singleton
 +
 +/**
-+ * Forbidden Vid kids filter. On a kids profile only movies rated PG / PG-13
-+ * and shows rated TV-Y, TV-Y7, TV-G or TV-PG are shown. Ratings come from the addon's
++ * Forbidden Vid kids filter. On a kids profile only the movie and TV ratings
++ * allowed by that profile's age level (see KidsTier) are shown. Ratings come from the addon's
 + * own age rating when present, otherwise from TMDB (US certification).
 + * Anything that can't be rated is hidden.
 + */
@@ -714,28 +729,29 @@ index 000000000..4249c83c8
 +    // Ratings are remembered between launches so kids rows load fast after the first time.
 +    private val saved = context.getSharedPreferences("fv_kids_ratings", android.content.Context.MODE_PRIVATE)
 +
-+    suspend fun isActive(): Boolean = kidsProfileStore.isKidsProfileActiveNow()
++    suspend fun isActive(): Boolean = kidsProfileStore.activeTierNow() != null
 +
 +    suspend fun filter(items: List<MetaPreview>): List<MetaPreview> {
-+        if (items.isEmpty() || !isActive()) return items
++        if (items.isEmpty()) return items
++        val tier = kidsProfileStore.activeTierNow() ?: return items
 +        return coroutineScope {
 +            items.map { item ->
 +                async {
-+                    if (!isHorror(item.genres) && isRatingAllowed(item.id, item.rawType, item.ageRating, item.imdbId)) item else null
++                    if (!isHorror(item.genres) && isRatingAllowed(tier, item.id, item.rawType, item.ageRating, item.imdbId)) item else null
 +                }
 +            }.awaitAll().filterNotNull()
 +        }
 +    }
 +
 +    suspend fun isAllowed(id: String, type: String, ageRating: String? = null, imdbId: String? = null): Boolean {
-+        if (!isActive()) return true
-+        return isRatingAllowed(id, type, ageRating, imdbId)
++        val tier = kidsProfileStore.activeTierNow() ?: return true
++        return isRatingAllowed(tier, id, type, ageRating, imdbId)
 +    }
 +
-+    private suspend fun isRatingAllowed(id: String, type: String, ageRating: String?, imdbId: String?): Boolean {
++    private suspend fun isRatingAllowed(tier: KidsTier, id: String, type: String, ageRating: String?, imdbId: String?): Boolean {
 +        val direct = ageRating?.let(::normalize)?.takeIf { it.isNotEmpty() }
 +        val rating = direct ?: ratingFor(id, type, imdbId)
-+        return rating in ALLOWED
++        return rating in tier.allowed
 +    }
 +
 +    /** Lets the kids catalogs share ratings they already verified, so detail pages open instantly. */
@@ -795,8 +811,6 @@ index 000000000..4249c83c8
 +        fun isHorror(genres: List<String>?): Boolean =
 +            genres.orEmpty().any { it.contains("horror", ignoreCase = true) }
 +
-+        // Movies: PG and PG-13. TV: TV-Y, TV-Y7, TV-G, TV-PG.
-+        val ALLOWED = setOf("PG", "PG-13", "TV-Y", "TV-Y7", "TV-Y7-FV", "TV-G", "TV-PG")
 +
 +        fun normalize(raw: String): String {
 +            val r = raw.trim().uppercase().replace(" ", "").replace("_", "-")
@@ -804,6 +818,7 @@ index 000000000..4249c83c8
 +                "PG13" -> "PG-13"
 +                "TVY" -> "TV-Y"
 +                "TVY7" -> "TV-Y7"
++                "TVY7FV", "TV-Y7FV" -> "TV-Y7-FV"
 +                "TVG" -> "TV-G"
 +                "TVPG" -> "TV-PG"
 +                "TV14" -> "TV-14"
@@ -814,10 +829,10 @@ index 000000000..4249c83c8
 +}
 diff --git a/app/src/main/java/com/nuvio/tv/core/kids/KidsProfileStore.kt b/app/src/main/java/com/nuvio/tv/core/kids/KidsProfileStore.kt
 new file mode 100644
-index 000000000..e15fe7b8b
+index 000000000..19b12f571
 --- /dev/null
 +++ b/app/src/main/java/com/nuvio/tv/core/kids/KidsProfileStore.kt
-@@ -0,0 +1,69 @@
+@@ -0,0 +1,115 @@
 +package com.nuvio.tv.core.kids
 +
 +import android.content.Context
@@ -826,6 +841,7 @@ index 000000000..e15fe7b8b
 +import androidx.datastore.preferences.core.Preferences
 +import androidx.datastore.preferences.core.edit
 +import androidx.datastore.preferences.core.stringSetPreferencesKey
++import androidx.datastore.preferences.core.stringPreferencesKey
 +import androidx.datastore.preferences.preferencesDataStoreFile
 +import com.nuvio.tv.core.profile.ProfileManager
 +import dagger.hilt.android.qualifiers.ApplicationContext
@@ -866,6 +882,51 @@ index 000000000..e15fe7b8b
 +        active in ids
 +    }.stateIn(scope, SharingStarted.Eagerly, false)
 +
++    private fun tierKey(profileId: Int) = stringPreferencesKey("tier_$profileId")
++
++    private fun idsOf(prefs: Preferences): Set<Int> =
++        prefs[key].orEmpty().mapNotNull { it.toIntOrNull() }.filter { it != 1 }.toSet()
++
++    /** Age level for each kids profile. */
++    val kidsTiers: StateFlow<Map<Int, KidsTier>> = store.data
++        .map { prefs -> idsOf(prefs).associateWith { KidsTier.fromStorage(prefs[tierKey(it)]) } }
++        .stateIn(scope, SharingStarted.Eagerly, emptyMap())
++
++    /** Age level of the active profile, or null when it isn't a kids profile. */
++    val activeTier: StateFlow<KidsTier?> = combine(kidsTiers, profileManager.activeProfileId) { tiers, active ->
++        tiers[active]
++    }.stateIn(scope, SharingStarted.Eagerly, null)
++
++    /** Reads straight from storage, so it's right even during startup or a profile switch. */
++    suspend fun activeTierNow(): KidsTier? {
++        val prefs = store.data.first()
++        val active = profileDataStore.activeProfileId.first()
++        if (active !in idsOf(prefs)) return null
++        return KidsTier.fromStorage(prefs[tierKey(active)])
++    }
++
++    suspend fun tierNow(profileId: Int): KidsTier? {
++        val prefs = store.data.first()
++        if (profileId !in idsOf(prefs)) return null
++        return KidsTier.fromStorage(prefs[tierKey(profileId)])
++    }
++
++    /** null turns kids mode off for the profile. */
++    suspend fun setTier(profileId: Int, tier: KidsTier?) {
++        if (profileId == 1) return
++        store.edit { prefs ->
++            val current = prefs[key].orEmpty().toMutableSet()
++            if (tier != null) {
++                current.add(profileId.toString())
++                prefs[tierKey(profileId)] = tier.name
++            } else {
++                current.remove(profileId.toString())
++                prefs.remove(tierKey(profileId))
++            }
++            prefs[key] = current
++        }
++    }
++
 +    fun isKids(profileId: Int): Boolean = profileId in kidsProfileIds.value
 +
 +    /** Reads the saved active profile and kids list from storage, so it's right even during startup or a switch. */
@@ -885,6 +946,44 @@ index 000000000..e15fe7b8b
 +            if (kids) current.add(profileId.toString()) else current.remove(profileId.toString())
 +            prefs[key] = current
 +        }
++    }
++}
+diff --git a/app/src/main/java/com/nuvio/tv/core/kids/KidsTier.kt b/app/src/main/java/com/nuvio/tv/core/kids/KidsTier.kt
+new file mode 100644
+index 000000000..71e2f8536
+--- /dev/null
++++ b/app/src/main/java/com/nuvio/tv/core/kids/KidsTier.kt
+@@ -0,0 +1,32 @@
++package com.nuvio.tv.core.kids
++
++/**
++ * Forbidden Vid kids age levels. Each level lists the US movie (MPA) and TV
++ * (TV Parental Guidelines) ratings it allows. Horror is blocked on every level.
++ */
++enum class KidsTier(
++    val label: String,
++    val movieRatings: List<String>,
++    val tvRatings: List<String>
++) {
++    AGES_0_4("Ages 0–4", listOf("G"), listOf("TV-Y")),
++    AGES_4_6("Ages 4–6", listOf("G"), listOf("TV-Y", "TV-G")),
++    AGES_6_9("Ages 6–9", listOf("G", "PG"), listOf("TV-Y", "TV-Y7", "TV-Y7-FV", "TV-G")),
++    TWEENS("Tweens 10–12", listOf("G", "PG", "PG-13"), listOf("TV-Y", "TV-Y7", "TV-Y7-FV", "TV-G", "TV-PG"));
++
++    val allowed: Set<String> = (movieRatings + tvRatings).toSet()
++
++    /** TMDB discover filter, e.g. "G|PG". */
++    val movieCertifications: String get() = movieRatings.joinToString("|")
++    val tvCertifications: String get() = tvRatings.filter { it != "TV-Y7-FV" }.joinToString("|")
++
++    val ratingsLine: String
++        get() = "Movies rated ${movieRatings.joinToString(", ")} · Shows rated ${tvRatings.filter { it != "TV-Y7-FV" }.joinToString(", ")}"
++
++    fun next(): KidsTier? = entries.getOrNull(ordinal + 1)
++
++    companion object {
++        val DEFAULT = TWEENS
++        fun fromStorage(value: String?): KidsTier = entries.firstOrNull { it.name == value } ?: DEFAULT
 +    }
 +}
 diff --git a/app/src/main/java/com/nuvio/tv/core/kids/StreamCleanup.kt b/app/src/main/java/com/nuvio/tv/core/kids/StreamCleanup.kt
@@ -915,7 +1014,7 @@ index 000000000..94ae0c8c6
 +    }
 +}
 diff --git a/app/src/main/java/com/nuvio/tv/core/profile/ProfileManager.kt b/app/src/main/java/com/nuvio/tv/core/profile/ProfileManager.kt
-index e66b4535f..b27a24b58 100644
+index e66b4535f..1d0cdd648 100644
 --- a/app/src/main/java/com/nuvio/tv/core/profile/ProfileManager.kt
 +++ b/app/src/main/java/com/nuvio/tv/core/profile/ProfileManager.kt
 @@ -1,6 +1,7 @@
@@ -926,7 +1025,31 @@ index e66b4535f..b27a24b58 100644
  import com.nuvio.tv.R
  import com.nuvio.tv.data.local.ProfileDataStore
  import com.nuvio.tv.data.local.ProfileDataStoreFactory
-@@ -132,6 +133,13 @@ class ProfileManager @Inject constructor(
+@@ -10,6 +11,7 @@ import kotlinx.coroutines.CoroutineScope
+ import kotlinx.coroutines.Dispatchers
+ import kotlinx.coroutines.SupervisorJob
+ import kotlinx.coroutines.withContext
++import kotlinx.coroutines.launch
+ import kotlinx.coroutines.flow.SharingStarted
+ import kotlinx.coroutines.flow.StateFlow
+ import kotlinx.coroutines.flow.first
+@@ -32,6 +34,15 @@ class ProfileManager @Inject constructor(
+ 
+     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+ 
++    init {
++        // Forbidden Vid: Trakt is removed - forget any saved Trakt sign-in on every profile.
++        scope.launch {
++            (1..MAX_PROFILES).forEach { id ->
++                runCatching { factory.get(id, "trakt_auth_store").edit { it.clear() } }
++            }
++        }
++    }
++
+     val activeProfileId: StateFlow<Int> = profileDataStore.activeProfileId
+         .stateIn(scope, SharingStarted.Eagerly, 1)
+ 
+@@ -132,6 +143,13 @@ class ProfileManager @Inject constructor(
          (remoteIds - previousIds).forEach { id -> factory.markProfileCreated(id) }
      }
  
@@ -940,7 +1063,7 @@ index e66b4535f..b27a24b58 100644
      private suspend fun removeLocalProfileData(id: Int) {
          if (id == 1) return
          credentialStores.forEach { store -> store.removeProfile(id) }
-@@ -140,7 +148,9 @@ class ProfileManager @Inject constructor(
+@@ -140,7 +158,9 @@ class ProfileManager @Inject constructor(
  
      suspend fun updateProfile(profile: UserProfile): Boolean {
          if (profiles.value.none { it.id == profile.id }) return false
@@ -968,6 +1091,32 @@ index 1d0da5b7e..d82e26a76 100644
          } else {
              listOf(defaultPrimaryProfile())
          }
+diff --git a/app/src/main/java/com/nuvio/tv/data/local/TraktSettingsDataStore.kt b/app/src/main/java/com/nuvio/tv/data/local/TraktSettingsDataStore.kt
+index 6f135af78..7ed785d10 100644
+--- a/app/src/main/java/com/nuvio/tv/data/local/TraktSettingsDataStore.kt
++++ b/app/src/main/java/com/nuvio/tv/data/local/TraktSettingsDataStore.kt
+@@ -29,9 +29,9 @@ enum class WatchProgressSource {
+     NUVIO_SYNC;
+ 
+     companion object {
+-        fun fromStorage(value: String?): WatchProgressSource {
+-            return entries.firstOrNull { it.name == value } ?: TRAKT
+-        }
++        // Forbidden Vid: Trakt removed - watch progress always comes from the app's own synced history.
++        @Suppress("UNUSED_PARAMETER")
++        fun fromStorage(value: String?): WatchProgressSource = NUVIO_SYNC
+     }
+ }
+ 
+@@ -53,7 +53,7 @@ class TraktSettingsDataStore @Inject constructor(
+         const val DEFAULT_CONTINUE_WATCHING_DAYS_CAP = 60
+         const val DEFAULT_SHOW_UNAIRED_NEXT_UP = true
+         const val DEFAULT_SHOW_META_COMMENTS = true
+-        val DEFAULT_WATCH_PROGRESS_SOURCE = WatchProgressSource.TRAKT
++        val DEFAULT_WATCH_PROGRESS_SOURCE = WatchProgressSource.NUVIO_SYNC
+         val DEFAULT_LIBRARY_SOURCE_MODE = LibrarySourceMode.TRAKT
+         val DEFAULT_MORE_LIKE_THIS_SOURCE = MoreLikeThisSourcePreference.TRAKT
+         const val MIN_CONTINUE_WATCHING_DAYS_CAP = 7
 diff --git a/app/src/main/java/com/nuvio/tv/data/remote/api/TmdbApi.kt b/app/src/main/java/com/nuvio/tv/data/remote/api/TmdbApi.kt
 index 2248fd9f9..2c4653fdc 100644
 --- a/app/src/main/java/com/nuvio/tv/data/remote/api/TmdbApi.kt
@@ -1441,10 +1590,10 @@ index f2ca5dec4..cf2e1820f 100644
              }
 diff --git a/app/src/main/java/com/nuvio/tv/ui/screens/kids/KidsScreens.kt b/app/src/main/java/com/nuvio/tv/ui/screens/kids/KidsScreens.kt
 new file mode 100644
-index 000000000..99876e9d2
+index 000000000..4031963f4
 --- /dev/null
 +++ b/app/src/main/java/com/nuvio/tv/ui/screens/kids/KidsScreens.kt
-@@ -0,0 +1,282 @@
+@@ -0,0 +1,284 @@
 +@file:OptIn(ExperimentalTvMaterial3Api::class)
 +
 +package com.nuvio.tv.ui.screens.kids
@@ -1487,7 +1636,6 @@ index 000000000..99876e9d2
 +import com.nuvio.tv.ui.theme.NuvioTheme
 +
 +private val KIDS_START = 40.dp
-+private const val KIDS_RATINGS_LINE = "Movies rated PG & PG-13 · Shows rated TV-Y, TV-Y7, TV-G & TV-PG"
 +
 +/**
 + * Forbidden Vid: on a kids profile, show [kidsContent]; otherwise [normalContent].
@@ -1523,11 +1671,12 @@ index 000000000..99876e9d2
 +        viewModel.loadHome()
 +    }
 +    val rows by viewModel.homeRows.collectAsState()
++    val tierState by viewModel.tier.collectAsState()
 +    var focused by remember { mutableStateOf<MetaPreview?>(null) }
 +    val heroItem = focused ?: rows.firstOrNull { it.items.isNotEmpty() }?.items?.firstOrNull()
 +
 +    Column(modifier = Modifier.fillMaxSize().background(NuvioTheme.colors.Background)) {
-+        KidsHero(item = heroItem, fallbackTitle = "Kids", modifier = Modifier.fillMaxWidth().weight(0.42f))
++        KidsHero(item = heroItem, fallbackTitle = "Kids", modifier = Modifier.fillMaxWidth().weight(0.42f), ratingsLine = tierState?.ratingsLine.orEmpty())
 +        LazyColumn(
 +            modifier = Modifier.fillMaxWidth().weight(0.58f),
 +            contentPadding = PaddingValues(top = 4.dp, bottom = 48.dp),
@@ -1576,7 +1725,7 @@ index 000000000..99876e9d2
 +
 +/** Top panel with the highlighted title's artwork and information, like the main Home screen. */
 +@Composable
-+private fun KidsHero(item: MetaPreview?, fallbackTitle: String, modifier: Modifier = Modifier) {
++private fun KidsHero(item: MetaPreview?, fallbackTitle: String, modifier: Modifier = Modifier, ratingsLine: String = "") {
 +    Box(modifier = modifier) {
 +        val art = item?.background ?: item?.poster
 +        if (art != null) {
@@ -1608,7 +1757,7 @@ index 000000000..99876e9d2
 +                .fillMaxWidth(0.6f),
 +            verticalArrangement = Arrangement.spacedBy(6.dp)
 +        ) {
-+            Text(text = KIDS_RATINGS_LINE, style = MaterialTheme.typography.labelMedium, color = NuvioTheme.colors.Secondary)
++            Text(text = ratingsLine, style = MaterialTheme.typography.labelMedium, color = NuvioTheme.colors.Secondary)
 +            Text(
 +                text = item?.name ?: fallbackTitle,
 +                style = MaterialTheme.typography.headlineMedium,
@@ -1646,11 +1795,13 @@ index 000000000..99876e9d2
 +) {
 +    val genres = if (type == "movie") KidsViewModel.MOVIE_GENRES else KidsViewModel.TV_GENRES
 +    val state by viewModel.browse.collectAsState()
++    val tierState by viewModel.tier.collectAsState()
 +    LaunchedEffect(type) { viewModel.startBrowse(type, state.genre) }
 +    var focused by remember { mutableStateOf<MetaPreview?>(null) }
 +
 +    Column(modifier = Modifier.fillMaxSize().background(NuvioTheme.colors.Background)) {
 +        KidsHero(
++            ratingsLine = tierState?.ratingsLine.orEmpty(),
 +            item = focused ?: state.items.firstOrNull(),
 +            fallbackTitle = title,
 +            modifier = Modifier.fillMaxWidth().weight(0.36f)
@@ -1716,10 +1867,10 @@ index 000000000..99876e9d2
 +}
 +
 +@Composable
-+private fun KidsHeader(title: String) {
++private fun KidsHeader(title: String, ratingsLine: String = "") {
 +    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
 +        Text(text = title, style = MaterialTheme.typography.headlineMedium, color = NuvioTheme.colors.TextPrimary)
-+        Text(text = KIDS_RATINGS_LINE, style = MaterialTheme.typography.bodyMedium, color = NuvioTheme.colors.Secondary)
++        Text(text = ratingsLine, style = MaterialTheme.typography.bodyMedium, color = NuvioTheme.colors.Secondary)
 +    }
 +}
 +
@@ -1729,16 +1880,17 @@ index 000000000..99876e9d2
 +}
 diff --git a/app/src/main/java/com/nuvio/tv/ui/screens/kids/KidsViewModel.kt b/app/src/main/java/com/nuvio/tv/ui/screens/kids/KidsViewModel.kt
 new file mode 100644
-index 000000000..9fb8dbb6a
+index 000000000..eb96005e2
 --- /dev/null
 +++ b/app/src/main/java/com/nuvio/tv/ui/screens/kids/KidsViewModel.kt
-@@ -0,0 +1,138 @@
+@@ -0,0 +1,163 @@
 +package com.nuvio.tv.ui.screens.kids
 +
 +import androidx.lifecycle.ViewModel
 +import androidx.lifecycle.viewModelScope
 +import com.nuvio.tv.core.kids.KidsCatalogService
 +import com.nuvio.tv.core.kids.KidsProfileStore
++import com.nuvio.tv.core.kids.KidsTier
 +import com.nuvio.tv.domain.model.MetaPreview
 +import dagger.hilt.android.lifecycle.HiltViewModel
 +import kotlinx.coroutines.Job
@@ -1788,17 +1940,39 @@ index 000000000..9fb8dbb6a
 +    private var browseJob: Job? = null
 +    private var browseType: String = "movie"
 +
++    /** Age level of the active kids profile (decides which ratings are shown). */
++    private val _tier = MutableStateFlow<KidsTier?>(null)
++    val tier: StateFlow<KidsTier?> = _tier.asStateFlow()
++    private var loadedTier: KidsTier? = null
++    private var homeJobs: List<Job> = emptyList()
++    private var browseStarted = false
++
 +    init {
 +        viewModelScope.launch {
-+            _isKids.value = kidsProfileStore.isKidsProfileActiveNow()
-+            kidsProfileStore.isKidsProfileActive.collect {
-+                _isKids.value = kidsProfileStore.isKidsProfileActiveNow()
-+            }
++            refreshTier()
++            kidsProfileStore.activeTier.collect { refreshTier() }
++        }
++    }
++
++    private suspend fun refreshTier() {
++        val now = kidsProfileStore.activeTierNow()
++        val changed = now != _tier.value
++        _tier.value = now
++        _isKids.value = now != null
++        if (changed && now != null && loadedTier != null && loadedTier != now) {
++            // Age level changed: start the rows and browse grid again with the new ratings.
++            homeJobs.forEach { it.cancel() }
++            browseJob?.cancel()
++            _homeRows.value = emptyList()
++            _browse.value = KidsBrowseState(genre = _browse.value.genre)
++            loadHome()
++            if (browseStarted) loadMore()
 +        }
 +    }
 +
 +    fun loadHome() {
 +        if (_homeRows.value.isNotEmpty()) return
++        loadedTier = _tier.value
 +        val defs = listOf(
 +            Triple("m_pop", "Popular Kids Movies", "movie" to null),
 +            Triple("m_anim", "Animated Movies", "movie" to 16),
@@ -1810,7 +1984,7 @@ index 000000000..9fb8dbb6a
 +            Triple("m_comedy", "Comedy Movies", "movie" to 35)
 +        )
 +        _homeRows.value = defs.map { (key, title, _) -> KidsRow(key, title) }
-+        defs.forEach { (key, _, spec) ->
++        homeJobs = defs.map { (key, _, spec) ->
 +            viewModelScope.launch {
 +                val (type, genre) = spec
 +                // Show the first page as soon as it's ready, then add a second page.
@@ -1833,6 +2007,8 @@ index 000000000..9fb8dbb6a
 +    fun startBrowse(type: String, genre: Int?) {
 +        if (browseType == type && _browse.value.genre == genre && _browse.value.page > 0) return
 +        browseType = type
++        browseStarted = true
++        loadedTier = loadedTier ?: _tier.value
 +        browseJob?.cancel()
 +        _browse.value = KidsBrowseState(genre = genre)
 +        loadMore()
@@ -1872,14 +2048,14 @@ index 000000000..9fb8dbb6a
 +    }
 +}
 diff --git a/app/src/main/java/com/nuvio/tv/ui/screens/profile/ProfileSelectionScreen.kt b/app/src/main/java/com/nuvio/tv/ui/screens/profile/ProfileSelectionScreen.kt
-index 5993b786e..f24c2f5ef 100644
+index 5993b786e..b17f4d1a8 100644
 --- a/app/src/main/java/com/nuvio/tv/ui/screens/profile/ProfileSelectionScreen.kt
 +++ b/app/src/main/java/com/nuvio/tv/ui/screens/profile/ProfileSelectionScreen.kt
 @@ -222,6 +222,7 @@ fun ProfileSelectionScreen(
      val isCreating by viewModel.isCreating.collectAsState()
      val isSaving by viewModel.isSaving.collectAsState()
      val isCopyingSettings by viewModel.isCopyingSettings.collectAsState()
-+    val kidsProfileIds by viewModel.kidsProfileIds.collectAsState()
++    val kidsTiers by viewModel.kidsTiers.collectAsState()
      val profilePinEnabled by viewModel.profilePinEnabled.collectAsState()
      val isPinOperationInProgress by viewModel.isPinOperationInProgress.collectAsState()
      val avatarImageUrlsById = remember(avatarCatalog, profiles) {
@@ -1888,7 +2064,7 @@ index 5993b786e..f24c2f5ef 100644
                  isCreating = isCreating,
                  onDismiss = { if (!isCreating) showCreateProfile = false },
 -                onCreateProfile = { name, colorHex, avatarId, copyFromProfileId, copyProviderCredentials ->
-+                onCreateProfile = { name, colorHex, avatarId, copyFromProfileId, copyProviderCredentials, isKids ->
++                onCreateProfile = { name, colorHex, avatarId, copyFromProfileId, copyProviderCredentials, kidsTier ->
                      viewModel.createProfile(
                          name = name,
                          avatarColorHex = colorHex,
@@ -1896,7 +2072,7 @@ index 5993b786e..f24c2f5ef 100644
                          copyFromProfileId = copyFromProfileId,
 -                        copyProviderCredentials = copyProviderCredentials
 +                        copyProviderCredentials = copyProviderCredentials,
-+                        isKids = isKids
++                        kidsTier = kidsTier
                      ) { result ->
                          when (result) {
                              is CreateProfileResult.Created -> {
@@ -1906,8 +2082,8 @@ index 5993b786e..f24c2f5ef 100644
                      profileToEdit = null
 -                }
 +                },
-+                isKidsProfile = profile.id in kidsProfileIds,
-+                onToggleKids = { kids -> viewModel.setKidsProfile(profile.id, kids) }
++                kidsTier = kidsTiers[profile.id],
++                onToggleKids = { tier -> viewModel.setKidsProfile(profile.id, tier) }
              )
          }
  
@@ -1917,13 +2093,13 @@ index 5993b786e..f24c2f5ef 100644
          copyFromProfileId: Int?,
 -        copyProviderCredentials: Boolean
 +        copyProviderCredentials: Boolean,
-+        isKids: Boolean
++        kidsTier: com.nuvio.tv.core.kids.KidsTier?
      ) -> Unit
  ) {
      BackHandler(onBack = onDismiss)
  
      var profileName by remember { mutableStateOf("") }
-+    var isKidsProfile by remember { mutableStateOf(false) }
++    var kidsTier by remember { mutableStateOf<com.nuvio.tv.core.kids.KidsTier?>(null) }
      var selectedColorHex by remember { mutableStateOf("#1E88E5") }
      var selectedAvatarId by remember { mutableStateOf<String?>(null) }
      var focusedAvatarName by remember { mutableStateOf<String?>(null) }
@@ -1935,7 +2111,7 @@ index 5993b786e..f24c2f5ef 100644
 -                                copyProviderCredentials
 +                                1,
 +                                true,
-+                                isKidsProfile
++                                kidsTier
                              )
                          }
                      )
@@ -1955,16 +2131,16 @@ index 5993b786e..f24c2f5ef 100644
 -                            )
 -                        },
 -                        isPrimary = false,
-+                        text = stringResource(R.string.fv_kids_profile) + if (isKidsProfile) ": ON" else ": OFF",
-+                        isPrimary = isKidsProfile,
++                        text = stringResource(R.string.fv_kids_profile) + ": " + (kidsTier?.label ?: "OFF"),
++                        isPrimary = kidsTier != null,
                          modifier = Modifier.fillMaxWidth(),
                          enabled = !isCreating,
 -                        onClick = { showSettingsSourceDialog = true }
-+                        onClick = { isKidsProfile = !isKidsProfile }
++                        onClick = { kidsTier = nextKidsTier(kidsTier) }
                      )
-+                    if (isKidsProfile) {
++                    kidsTier?.let { tier ->
 +                        Text(
-+                            text = stringResource(R.string.fv_kids_profile_subtitle),
++                            text = tier.ratingsLine + ". " + stringResource(R.string.fv_kids_profile_subtitle),
 +                            color = NuvioTheme.colors.TextSecondary,
 +                            fontSize = 13.sp,
 +                            textAlign = TextAlign.Center
@@ -1979,28 +2155,37 @@ index 5993b786e..f24c2f5ef 100644
      onDismiss: () -> Unit,
 -    onSaveProfile: (UserProfile) -> Unit
 +    onSaveProfile: (UserProfile) -> Unit,
-+    isKidsProfile: Boolean = false,
-+    onToggleKids: ((Boolean) -> Unit)? = null
++    kidsTier: com.nuvio.tv.core.kids.KidsTier? = null,
++    onToggleKids: ((com.nuvio.tv.core.kids.KidsTier?) -> Unit)? = null
  ) {
      BackHandler(onBack = onDismiss)
  
-@@ -1892,6 +1902,15 @@ private fun EditProfileOverlay(
+@@ -1892,6 +1902,24 @@ private fun EditProfileOverlay(
                          focusRequester = nameFocusRequester
                      )
  
 +                    if (onToggleKids != null && profile.id != 1) {
 +                        OverlayButton(
-+                            text = stringResource(R.string.fv_kids_profile) + if (isKidsProfile) ": ON" else ": OFF",
-+                            isPrimary = isKidsProfile,
++                            text = stringResource(R.string.fv_kids_profile) + ": " + (kidsTier?.label ?: "OFF"),
++                            isPrimary = kidsTier != null,
 +                            modifier = Modifier.fillMaxWidth(),
-+                            onClick = { onToggleKids(!isKidsProfile) }
++                            onClick = { onToggleKids(nextKidsTier(kidsTier)) }
 +                        )
++                        kidsTier?.let { tier ->
++                            Text(
++                                text = tier.ratingsLine,
++                                color = NuvioTheme.colors.TextSecondary,
++                                fontSize = 13.sp,
++                                textAlign = TextAlign.Center,
++                                modifier = Modifier.fillMaxWidth()
++                            )
++                        }
 +                    }
 +
                      OverlayButton(
                          text = stringResource(R.string.profile_cancel),
                          isPrimary = true,
-@@ -2309,10 +2328,11 @@ private fun ProfilePinOverlay(
+@@ -2309,10 +2337,11 @@ private fun ProfilePinOverlay(
                  lineHeight = 24.sp
              )
  
@@ -2016,7 +2201,7 @@ index 5993b786e..f24c2f5ef 100644
              ) {
                  Spacer(modifier = Modifier.height(10.dp))
                  Text(
-@@ -2328,12 +2348,7 @@ private fun ProfilePinOverlay(
+@@ -2328,12 +2357,7 @@ private fun ProfilePinOverlay(
  
              Spacer(modifier = Modifier.height(backHintGap))
  
@@ -2030,8 +2215,16 @@ index 5993b786e..f24c2f5ef 100644
  
              Spacer(modifier = Modifier.height(contentBottomPadding))
          }
+@@ -2645,3 +2669,7 @@ private fun OverlayButton(
+         )
+     }
+ }
++
++/** Forbidden Vid: Off → Ages 0–4 → 4–6 → 6–9 → Tweens → Off. */
++private fun nextKidsTier(current: com.nuvio.tv.core.kids.KidsTier?): com.nuvio.tv.core.kids.KidsTier? =
++    if (current == null) com.nuvio.tv.core.kids.KidsTier.entries.first() else current.next()
 diff --git a/app/src/main/java/com/nuvio/tv/ui/screens/profile/ProfileSelectionViewModel.kt b/app/src/main/java/com/nuvio/tv/ui/screens/profile/ProfileSelectionViewModel.kt
-index ebee289f3..6782ec99a 100644
+index ebee289f3..18595f9b5 100644
 --- a/app/src/main/java/com/nuvio/tv/ui/screens/profile/ProfileSelectionViewModel.kt
 +++ b/app/src/main/java/com/nuvio/tv/ui/screens/profile/ProfileSelectionViewModel.kt
 @@ -51,7 +51,8 @@ class ProfileSelectionViewModel @Inject constructor(
@@ -2044,17 +2237,18 @@ index ebee289f3..6782ec99a 100644
  ) : ViewModel() {
      val activeProfileId: StateFlow<Int> = profileManager.activeProfileId
      val profiles: StateFlow<List<UserProfile>> = profileManager.profiles
-@@ -164,11 +165,39 @@ class ProfileSelectionViewModel @Inject constructor(
+@@ -164,11 +165,40 @@ class ProfileSelectionViewModel @Inject constructor(
      var isSelectingProfile = false
          private set
  
-+    /** Forbidden Vid: ids of kids profiles. */
-+    val kidsProfileIds: StateFlow<Set<Int>> = kidsProfileStore.kidsProfileIds
++    /** Forbidden Vid: age level of each kids profile. */
++    val kidsTiers: StateFlow<Map<Int, com.nuvio.tv.core.kids.KidsTier>> = kidsProfileStore.kidsTiers
 +
-+    fun setKidsProfile(profileId: Int, kids: Boolean) {
++    /** null turns kids mode off. */
++    fun setKidsProfile(profileId: Int, tier: com.nuvio.tv.core.kids.KidsTier?) {
 +        viewModelScope.launch {
-+            kidsProfileStore.setKids(profileId, kids)
-+            if (kids) profileManager.clearProfileCredentials(profileId)
++            kidsProfileStore.setTier(profileId, tier)
++            if (tier != null) profileManager.clearProfileCredentials(profileId)
 +        }
 +    }
 +
@@ -2084,11 +2278,11 @@ index ebee289f3..6782ec99a 100644
                  profileManager.setActiveProfile(id)
                  onComplete()
              } catch (error: CancellationException) {
-@@ -188,26 +217,31 @@ class ProfileSelectionViewModel @Inject constructor(
+@@ -188,26 +218,32 @@ class ProfileSelectionViewModel @Inject constructor(
          avatarId: String? = null,
          copyFromProfileId: Int? = null,
          copyProviderCredentials: Boolean = false,
-+        isKids: Boolean = false,
++        kidsTier: com.nuvio.tv.core.kids.KidsTier? = null,
          onComplete: (CreateProfileResult) -> Unit = {}
      ) {
          if (_isCreating.value) return
@@ -2104,7 +2298,8 @@ index ebee289f3..6782ec99a 100644
                      avatarId = avatarId
                  )
                  if (profile != null) {
-+                    if (isKids) kidsProfileStore.setKids(profile.id, true)
++                    val isKids = kidsTier != null
++                    if (kidsTier != null) kidsProfileStore.setTier(profile.id, kidsTier)
                      profileSyncService.pushToRemote()
 -                    val copyResult = copyFromProfileId?.let { sourceProfileId ->
 -                        profileSettingsSyncService.copyProfileSetup(
@@ -2319,10 +2514,10 @@ index 78935e68b..8ca34a894 100644
              )
              if (newProfile != null) {
 diff --git a/app/src/main/java/com/nuvio/tv/ui/screens/settings/SettingsCatalog.kt b/app/src/main/java/com/nuvio/tv/ui/screens/settings/SettingsCatalog.kt
-index e7df43304..245b92034 100644
+index e7df43304..448eb97d9 100644
 --- a/app/src/main/java/com/nuvio/tv/ui/screens/settings/SettingsCatalog.kt
 +++ b/app/src/main/java/com/nuvio/tv/ui/screens/settings/SettingsCatalog.kt
-@@ -31,12 +31,15 @@ internal fun visibleSettingsCategories(
+@@ -31,12 +31,13 @@ internal fun visibleSettingsCategories(
      isWatchPartyAvailable: Boolean = false
  ): List<SettingsCategory> = SettingsCategory.entries.filter { category ->
      when (category) {
@@ -2330,8 +2525,6 @@ index e7df43304..245b92034 100644
          SettingsCategory.ACCOUNT,
          SettingsCategory.PROFILES -> isPrimaryProfile
 -        SettingsCategory.WATCH_PARTY -> isWatchPartyAvailable
-+        // Shown as "Trakt": sign in to a Trakt account.
-+        SettingsCategory.TRACKING -> isPrimaryProfile
 +        // Shown as "Updates" (check for a newer Forbidden Vid build).
 +        SettingsCategory.ABOUT -> isPrimaryProfile && com.nuvio.tv.core.build.AppFeaturePolicy.inAppUpdatesEnabled
          SettingsCategory.DEBUG -> isDebugBuild && !isEssentialMode
@@ -86050,7 +86243,7 @@ index 2a60888c5..8cd387129 100644
      <string name="simkl_sync_info_docs">閱讀 Simkl 同步指南</string>
      <string name="error_open_browser_failed">無法開啟瀏覽器</string>
 diff --git a/app/src/main/res/values/strings.xml b/app/src/main/res/values/strings.xml
-index cc39cbce6..58c51ee68 100644
+index cc39cbce6..6fb2f8c3c 100644
 --- a/app/src/main/res/values/strings.xml
 +++ b/app/src/main/res/values/strings.xml
 @@ -1,5 +1,5 @@
@@ -86421,7 +86614,7 @@ index cc39cbce6..58c51ee68 100644
 +    <string name="fv_nav_movies" translatable="false">Movies</string>
 +    <string name="fv_nav_tv_series" translatable="false">TV Series</string>
 +    <string name="fv_kids_profile" translatable="false">Kids profile</string>
-+    <string name="fv_kids_profile_subtitle" translatable="false">Movies rated PG or PG-13, and shows rated TV-Y, TV-Y7, TV-G or TV-PG. Unrated titles are hidden.</string>
++    <string name="fv_kids_profile_subtitle" translatable="false">No horror. Unrated titles are hidden. Press again for the next age.</string>
 +    <string name="fv_kids_badge" translatable="false">Kids</string>
 +    <string name="fv_kids_blocked" translatable="false">This title isn\'t available on a kids profile.</string>
  </resources>

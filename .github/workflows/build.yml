@@ -70,39 +70,6 @@ jobs:
           fi
           echo "TMDB_API_KEY=${TMDB_API_KEY}" >> nuvio/local.properties
 
-          # Trakt sign-in: the client id/secret inside Nuvio's app, tested against Trakt.
-          UA="ForbiddenVid-build/1.0"
-          CANDS=$(python3 fv/scripts/nuvio_hex_candidates.py "$APK" 64)
-          for c in $CANDS; do echo "::add-mask::$c"; done
-          TRAKT_ID=""; TRAKT_SECRET=""; DEVICE_CODE=""
-          for c in $CANDS; do
-            code=$(curl -s -o "$RUNNER_TEMP/dc.json" -w "%{http_code}" -X POST "https://api.trakt.tv/oauth/device/code" \
-              -H "Content-Type: application/json" -H "User-Agent: $UA" -d "{\"client_id\":\"$c\"}")
-            if [ "$code" = "200" ]; then
-              TRAKT_ID="$c"
-              DEVICE_CODE=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['device_code'])" "$RUNNER_TEMP/dc.json")
-              echo "::add-mask::$DEVICE_CODE"
-              break
-            fi
-          done
-          if [ -n "$TRAKT_ID" ]; then
-            for c in $CANDS; do
-              [ "$c" = "$TRAKT_ID" ] && continue
-              sleep 6
-              code=$(curl -s -o /dev/null -w "%{http_code}" -X POST "https://api.trakt.tv/oauth/device/token" \
-                -H "Content-Type: application/json" -H "User-Agent: $UA" \
-                -d "{\"code\":\"$DEVICE_CODE\",\"client_id\":\"$TRAKT_ID\",\"client_secret\":\"$c\"}")
-              # 400 = "waiting for the user" -> this secret belongs to the client id
-              if [ "$code" = "400" ]; then TRAKT_SECRET="$c"; break; fi
-            done
-          fi
-          if [ -n "$TRAKT_ID" ] && [ -n "$TRAKT_SECRET" ]; then
-            echo "Trakt sign-in enabled"
-          else
-            echo "::warning::Couldn't find working Trakt credentials - Trakt sign-in won't work."
-          fi
-          echo "TRAKT_CLIENT_ID=${TRAKT_ID}" >> nuvio/local.properties
-          echo "TRAKT_CLIENT_SECRET=${TRAKT_SECRET}" >> nuvio/local.properties
           touch nuvio/local.dev.properties
 
       - name: Signing key
