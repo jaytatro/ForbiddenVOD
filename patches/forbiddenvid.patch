@@ -3059,6 +3059,81 @@ index aba7ae79b..bfedfe53f 100644
                  title = stringResource(R.string.discover_filter_catalog),
                  value = selectedCatalogLabel,
                  selectedValue = uiState.selectedDiscoverCatalogKey,
+diff --git a/app/src/main/java/com/nuvio/tv/ui/screens/settings/ForbiddenLogoutSettingsContent.kt b/app/src/main/java/com/nuvio/tv/ui/screens/settings/ForbiddenLogoutSettingsContent.kt
+new file mode 100644
+index 000000000..a816eb4d5
+--- /dev/null
++++ b/app/src/main/java/com/nuvio/tv/ui/screens/settings/ForbiddenLogoutSettingsContent.kt
+@@ -0,0 +1,69 @@
++@file:OptIn(ExperimentalTvMaterial3Api::class)
++
++package com.nuvio.tv.ui.screens.settings
++
++import androidx.compose.foundation.layout.Arrangement
++import androidx.compose.foundation.layout.Column
++import androidx.compose.foundation.layout.fillMaxSize
++import androidx.compose.foundation.layout.fillMaxWidth
++import androidx.compose.material.icons.Icons
++import androidx.compose.material.icons.automirrored.filled.Logout
++import androidx.compose.runtime.Composable
++import androidx.compose.runtime.collectAsState
++import androidx.compose.runtime.getValue
++import androidx.compose.runtime.mutableStateOf
++import androidx.compose.runtime.remember
++import androidx.compose.runtime.setValue
++import androidx.compose.ui.Modifier
++import androidx.compose.ui.focus.FocusRequester
++import androidx.compose.ui.focus.focusRequester
++import androidx.hilt.navigation.compose.hiltViewModel
++import androidx.tv.material3.ExperimentalTvMaterial3Api
++import com.nuvio.tv.domain.model.AuthState
++import com.nuvio.tv.ui.screens.account.AccountSignOutConfirmationDialog
++import com.nuvio.tv.ui.screens.account.AccountViewModel
++import com.nuvio.tv.ui.theme.NuvioTheme
++
++/** Forbidden Vid: Settings → Log Out. Signing out brings back the email / password screen. */
++@Composable
++internal fun ForbiddenLogoutSettingsContent(
++    initialFocusRequester: FocusRequester? = null
++) {
++    val viewModel: AccountViewModel = hiltViewModel()
++    val uiState by viewModel.uiState.collectAsState()
++    val email = (uiState.authState as? AuthState.FullAccount)?.email
++    var confirm by remember { mutableStateOf(false) }
++
++    Column(
++        modifier = Modifier.fillMaxSize(),
++        verticalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.md)
++    ) {
++        SettingsDetailHeader(
++            title = "Log Out",
++            subtitle = email?.let { "Signed in as $it" } ?: "Sign out of Forbidden Vid on this TV"
++        )
++        SettingsGroupCard(modifier = Modifier.fillMaxWidth()) {
++            SettingsActionRow(
++                title = "Log out",
++                subtitle = "Signs out on this TV. You'll need your email and password to sign back in.",
++                trailingIcon = Icons.AutoMirrored.Filled.Logout,
++                onClick = { confirm = true },
++                modifier = if (initialFocusRequester != null) {
++                    Modifier.focusRequester(initialFocusRequester)
++                } else {
++                    Modifier
++                }
++            )
++        }
++    }
++
++    if (confirm) {
++        AccountSignOutConfirmationDialog(
++            onConfirm = {
++                confirm = false
++                viewModel.signOut()
++            },
++            onDismiss = { confirm = false }
++        )
++    }
++}
 diff --git a/app/src/main/java/com/nuvio/tv/ui/screens/settings/ForbiddenUpdatesSettingsContent.kt b/app/src/main/java/com/nuvio/tv/ui/screens/settings/ForbiddenUpdatesSettingsContent.kt
 new file mode 100644
 index 000000000..b9f8a171a
@@ -3152,16 +3227,16 @@ index 78935e68b..8ca34a894 100644
              )
              if (newProfile != null) {
 diff --git a/app/src/main/java/com/nuvio/tv/ui/screens/settings/SettingsCatalog.kt b/app/src/main/java/com/nuvio/tv/ui/screens/settings/SettingsCatalog.kt
-index e7df43304..d8a4f4815 100644
+index e7df43304..9a83ed02b 100644
 --- a/app/src/main/java/com/nuvio/tv/ui/screens/settings/SettingsCatalog.kt
 +++ b/app/src/main/java/com/nuvio/tv/ui/screens/settings/SettingsCatalog.kt
-@@ -31,12 +31,13 @@ internal fun visibleSettingsCategories(
+@@ -31,12 +31,14 @@ internal fun visibleSettingsCategories(
      isWatchPartyAvailable: Boolean = false
  ): List<SettingsCategory> = SettingsCategory.entries.filter { category ->
      when (category) {
--        SettingsCategory.ACCOUNT,
 +        // Forbidden Vid: only Account and Profiles are offered, and only on the primary profile.
-+        // Forbidden Vid: no Account section (sign-in happens when the app first opens).
++        // Shown as "Log Out" (signing in happens when the app opens).
+         SettingsCategory.ACCOUNT,
          SettingsCategory.PROFILES -> isPrimaryProfile
 -        SettingsCategory.WATCH_PARTY -> isWatchPartyAvailable
 +        // Shown as "Updates" (check for a newer Forbidden Vid build).
@@ -3174,18 +3249,28 @@ index e7df43304..d8a4f4815 100644
  }
  
 diff --git a/app/src/main/java/com/nuvio/tv/ui/screens/settings/SettingsScreen.kt b/app/src/main/java/com/nuvio/tv/ui/screens/settings/SettingsScreen.kt
-index 9f75a94a0..9a3d67471 100644
+index 9f75a94a0..6d832d516 100644
 --- a/app/src/main/java/com/nuvio/tv/ui/screens/settings/SettingsScreen.kt
 +++ b/app/src/main/java/com/nuvio/tv/ui/screens/settings/SettingsScreen.kt
-@@ -37,6 +37,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
+@@ -37,6 +37,8 @@ import androidx.compose.foundation.lazy.itemsIndexed
  import androidx.compose.foundation.lazy.LazyListState
  import androidx.compose.foundation.lazy.rememberLazyListState
  import androidx.compose.material.icons.Icons
++import androidx.compose.material.icons.automirrored.filled.Logout
 +import androidx.compose.material.icons.filled.SystemUpdate
  import androidx.compose.material.icons.rounded.Groups
  import androidx.compose.material.icons.rounded.PlayArrow
  import androidx.compose.material.icons.filled.BugReport
-@@ -162,9 +163,9 @@ private fun settingsSectionSpec(category: SettingsCategory): SettingsSectionSpec
+@@ -154,7 +156,7 @@ private sealed interface ExperienceModeLoadState {
+ 
+ @Composable
+ private fun settingsSectionSpec(category: SettingsCategory): SettingsSectionSpec = when (category) {
+-    SettingsCategory.ACCOUNT -> SettingsSectionSpec(category, stringResource(R.string.settings_account), Icons.Default.Person, destination = SettingsSectionDestination.Inline)
++    SettingsCategory.ACCOUNT -> SettingsSectionSpec(category, "Log Out", Icons.AutoMirrored.Filled.Logout, destination = SettingsSectionDestination.Inline)
+     SettingsCategory.PROFILES -> SettingsSectionSpec(category, stringResource(R.string.settings_profiles), Icons.Default.People, destination = SettingsSectionDestination.Inline)
+     SettingsCategory.WATCH_PARTY -> SettingsSectionSpec(category, stringResource(R.string.party_title), Icons.Rounded.Groups, destination = SettingsSectionDestination.Inline)
+     SettingsCategory.APPEARANCE -> SettingsSectionSpec(category, stringResource(R.string.appearance_title), Icons.Default.Palette, destination = SettingsSectionDestination.Inline)
+@@ -162,9 +164,9 @@ private fun settingsSectionSpec(category: SettingsCategory): SettingsSectionSpec
      SettingsCategory.CONTENT_DISCOVERY -> SettingsSectionSpec(category, stringResource(R.string.settings_content_discovery), Icons.Default.Explore, destination = SettingsSectionDestination.Inline)
      SettingsCategory.PLAYBACK -> SettingsSectionSpec(category, stringResource(R.string.settings_playback), Icons.Rounded.PlayArrow, destination = SettingsSectionDestination.Inline)
      SettingsCategory.INTEGRATION -> SettingsSectionSpec(category, stringResource(R.string.settings_integration), Icons.Default.Link, destination = SettingsSectionDestination.Inline)
@@ -3197,7 +3282,7 @@ index 9f75a94a0..9a3d67471 100644
      SettingsCategory.DEBUG -> SettingsSectionSpec(category, stringResource(R.string.settings_debug), Icons.Default.BugReport, destination = SettingsSectionDestination.Inline)
      SettingsCategory.EXPERIENCE -> SettingsSectionSpec(category, stringResource(R.string.settings_experience), Icons.Default.Tune, destination = SettingsSectionDestination.Inline)
  }
-@@ -945,9 +946,7 @@ private fun SettingsDetailPane(
+@@ -945,9 +947,7 @@ private fun SettingsDetailPane(
              animeSkipFocusRequester = integrationAnimeSkipFocusRequester,
              autoFocusEnabled = allowDetailAutofocus
          )
@@ -3207,6 +3292,16 @@ index 9f75a94a0..9a3d67471 100644
 +        SettingsCategory.ABOUT -> ForbiddenUpdatesSettingsContent(
              initialFocusRequester = if (allowDetailAutofocus) {
                  contentFocusRequesters[SettingsCategory.ABOUT]
+             } else {
+@@ -964,8 +964,7 @@ private fun SettingsDetailPane(
+                 null
+             }
+         )
+-        SettingsCategory.ACCOUNT -> AccountSettingsInline(
+-            onNavigateToAuthQrSignIn = onNavigateToAuthQrSignIn,
++        SettingsCategory.ACCOUNT -> ForbiddenLogoutSettingsContent(
+             initialFocusRequester = if (allowDetailAutofocus) {
+                 contentFocusRequesters[SettingsCategory.ACCOUNT]
              } else {
 diff --git a/app/src/main/java/com/nuvio/tv/ui/screens/settings/TrackingSettingsScreen.kt b/app/src/main/java/com/nuvio/tv/ui/screens/settings/TrackingSettingsScreen.kt
 index 5e4ba5762..24af8010a 100644
