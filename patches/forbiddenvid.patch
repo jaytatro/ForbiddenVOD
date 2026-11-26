@@ -197,10 +197,10 @@ index 76c43e2c1..fb404f88a 100644
      Column(modifier = Modifier.fillMaxSize()) {
          AnimatedVisibility(
 diff --git a/app/src/full/java/com/nuvio/tv/updater/ui/UpdateDialogs.kt b/app/src/full/java/com/nuvio/tv/updater/ui/UpdateDialogs.kt
-index 52b648362..0d7b5ba07 100644
+index 52b648362..728bc191a 100644
 --- a/app/src/full/java/com/nuvio/tv/updater/ui/UpdateDialogs.kt
 +++ b/app/src/full/java/com/nuvio/tv/updater/ui/UpdateDialogs.kt
-@@ -191,3 +191,84 @@ internal fun UpdateUnknownSourcesDialog(
+@@ -191,3 +191,85 @@ internal fun UpdateUnknownSourcesDialog(
          }
      }
  }
@@ -225,11 +225,12 @@ index 52b648362..0d7b5ba07 100644
 +    NuvioDialog(
 +        onDismiss = onLater,
 +        title = "Update available",
-+        subtitle = "A new version of Forbidden Vid is ready: ${update.title}",
++        subtitle = "A new version of Forbidden Vid is ready: " +
++            (Regex("\\d+(\\.\\d+)+").find(update.tag)?.value ?: update.tag.removePrefix("v")),
 +        width = 600.dp,
 +        suppressFirstKeyUp = false
 +    ) {
-+        if (update.notes.isNotBlank()) {
++        if (false && update.notes.isNotBlank()) {
 +            Text(
 +                text = update.notes.lineSequence()
 +                    .map { it.trim().trimStart('#', '*', '-', ' ') }
@@ -286,7 +287,7 @@ index 52b648362..0d7b5ba07 100644
 +    }
 +}
 diff --git a/app/src/main/java/com/nuvio/tv/MainActivity.kt b/app/src/main/java/com/nuvio/tv/MainActivity.kt
-index 349a4f389..020ecbc76 100644
+index 349a4f389..20b0419f2 100644
 --- a/app/src/main/java/com/nuvio/tv/MainActivity.kt
 +++ b/app/src/main/java/com/nuvio/tv/MainActivity.kt
 @@ -51,6 +51,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
@@ -306,7 +307,64 @@ index 349a4f389..020ecbc76 100644
  import androidx.compose.ui.draw.clip
  import androidx.compose.ui.draw.drawWithCache
  import androidx.compose.ui.focus.FocusDirection
-@@ -1055,6 +1058,8 @@ open class MainActivity : ComponentActivity() {
+@@ -439,6 +442,23 @@ open class MainActivity : ComponentActivity() {
+                 }
+             }
+ 
++            // Forbidden Vid: as soon as the sign-in finishes, pull the account's profiles and go straight into the app.
++            var wasSignedOut by remember { mutableStateOf(false) }
++            LaunchedEffect(authState) {
++                when (authState) {
++                    is AuthState.FullAccount -> if (wasSignedOut) {
++                        wasSignedOut = false
++                        for (attempt in 0 until 3) {
++                            if (profileSyncService.pullFromRemote().isSuccess) break
++                            if (attempt < 2) delay(1_000)
++                        }
++                        startupSyncService.requestSyncNow()
++                    }
++                    is AuthState.Loading -> Unit
++                    else -> wasSignedOut = true
++                }
++            }
++
+             val activeProfileId by profileManager.activeProfileId.collectAsState()
+             val startupSplashEnabled by profileManager.startupSplashEnabled.collectAsState()
+             val startupLoadingState = remember(activeProfileId, startupSession) { StartupLoadingState() }
+@@ -745,9 +765,8 @@ open class MainActivity : ComponentActivity() {
+                     if (!surfaceContentReady) {
+                         // Still loading auth state; nothing to show yet.
+                     } else if (
+-                        hasSeenAuthQrOnFirstLaunch == false &&
+-                        authState !is AuthState.FullAccount &&
+-                        !onboardingCompletedThisSession
++                        // Forbidden Vid: the email / password screen shows whenever nobody is signed in.
++                        authState !is AuthState.FullAccount
+                     ) {
+                         startupDestination = StartupDestination.Setup
+                         AuthQrSignInScreen(
+@@ -823,16 +842,15 @@ open class MainActivity : ComponentActivity() {
+                         )
+                     } else {
+ 
+-                    val layoutChosen = mainUiPrefs.hasChosenLayout
++                    // Forbidden Vid: no layout picker - always go straight to Home.
++                    val layoutChosen = mainUiPrefs.hasChosenLayout?.let { true }
+                     val prefsLoading = layoutChosen == null || !mainUiPrefs.experienceModeLoaded || installedAddons == null
+                     if (!prefsLoading) {
+                     val effectiveExperienceMode = mainUiPrefs.experienceMode
+                         ?: if (layoutChosen) ExperienceMode.ADVANCED else null
+                     val needsExperienceSelection = effectiveExperienceMode == null
+-                    val needsEssentialAddonSetup =
+-                        effectiveExperienceMode == ExperienceMode.ESSENTIAL &&
+-                            installedAddons.orEmpty().isEmpty() &&
+-                            !mainUiPrefs.addonSetupSkipped
++                    // Forbidden Vid: addons come from the account (managed on the website), so no addon setup screen.
++                    val needsEssentialAddonSetup = false
+                     val pendingDeepLink by pendingDeepLinkUrl.collectAsState()
+ 
+                     LaunchedEffect(pendingDeepLink) {
+@@ -1055,6 +1073,8 @@ open class MainActivity : ComponentActivity() {
                              add(Screen.Search.route)
                              add(Screen.Library.route)
                              add(Screen.Settings.route)
@@ -315,7 +373,7 @@ index 349a4f389..020ecbc76 100644
                              if (discoverLocation == DiscoverLocation.IN_SIDEBAR) {
                                  add(Screen.Discover.route)
                              }
-@@ -1062,56 +1067,28 @@ open class MainActivity : ComponentActivity() {
+@@ -1062,56 +1082,28 @@ open class MainActivity : ComponentActivity() {
                      }
  
                      val strNavHome = stringResource(R.string.nav_home)
@@ -385,7 +443,7 @@ index 349a4f389..020ecbc76 100644
                          }
                      }
                      val selectedDrawerRoute = drawerItems.firstOrNull { item ->
-@@ -1147,11 +1124,12 @@ open class MainActivity : ComponentActivity() {
+@@ -1147,11 +1139,12 @@ open class MainActivity : ComponentActivity() {
                          showBanner = updateState.showBanner && currentRoute?.startsWith("player/") != true
                      )
  
@@ -400,7 +458,7 @@ index 349a4f389..020ecbc76 100644
                          onDismissUnknownSources = updateViewModel::dismissUnknownSourcesDialog,
                          onOpenUnknownSources = updateViewModel::openUnknownSourcesSettings,
                          onFeedbackShown = updateViewModel::consumeFeedbackMessage
-@@ -1166,7 +1144,38 @@ open class MainActivity : ComponentActivity() {
+@@ -1166,7 +1159,38 @@ open class MainActivity : ComponentActivity() {
                              focusedSplashTheme = null
                              hasSelectedProfileThisSession = false
                          }
@@ -440,7 +498,7 @@ index 349a4f389..020ecbc76 100644
                              CompositionLocalProvider(LocalNavViewModelStoreOwner provides navViewModelStoreOwner) {
                                  if (modernSidebarEnabled) {
                                      ModernSidebarScaffold(
-@@ -1541,13 +1550,21 @@ private fun LegacySidebarScaffold(
+@@ -1541,13 +1565,21 @@ private fun LegacySidebarScaffold(
                      )
  
                      if (isExpanded) {
@@ -463,7 +521,7 @@ index 349a4f389..020ecbc76 100644
                                  var isProfileFocused by remember { mutableStateOf(false) }
                                  val profileItemShape = NuvioTheme.shapes.navItem
                                  val profileLeadingInset = NuvioTheme.spacing.lg + NuvioTheme.spacing.xxs
-@@ -1592,13 +1609,6 @@ private fun LegacySidebarScaffold(
+@@ -1592,13 +1624,6 @@ private fun LegacySidebarScaffold(
                                          )
                                      }
                                  }
@@ -1230,6 +1288,37 @@ index e66b4535f..1d0cdd648 100644
          return true
      }
  
+diff --git a/app/src/main/java/com/nuvio/tv/core/sync/ProfileSettingsSyncService.kt b/app/src/main/java/com/nuvio/tv/core/sync/ProfileSettingsSyncService.kt
+index d8a733a15..a19d67476 100644
+--- a/app/src/main/java/com/nuvio/tv/core/sync/ProfileSettingsSyncService.kt
++++ b/app/src/main/java/com/nuvio/tv/core/sync/ProfileSettingsSyncService.kt
+@@ -313,7 +313,7 @@ class ProfileSettingsSyncService @Inject constructor(
+                             put("p_copy_mobile", false)
+                             put("p_copy_desktop", false)
+                             put("p_copy_provider_credentials", copyProviderCredentials)
+-                            put("p_replace_provider_credentials", false)
++                            put("p_replace_provider_credentials", copyProviderCredentials) // Forbidden Vid: same keys as the primary
+                             putSyncOriginClientId(syncClientIdentity)
+                         }
+                         val response = withJwtRefreshRetry {
+diff --git a/app/src/main/java/com/nuvio/tv/data/local/ExperienceModeDataStore.kt b/app/src/main/java/com/nuvio/tv/data/local/ExperienceModeDataStore.kt
+index 202665d62..3607cd196 100644
+--- a/app/src/main/java/com/nuvio/tv/data/local/ExperienceModeDataStore.kt
++++ b/app/src/main/java/com/nuvio/tv/data/local/ExperienceModeDataStore.kt
+@@ -33,11 +33,8 @@ class ExperienceModeDataStore @Inject constructor(
+             factory.get(pid, FEATURE).data.map { prefs -> extract(prefs) }
+         }
+ 
+-    val mode: Flow<ExperienceMode?> = profileFlow { prefs ->
+-        prefs[modeKey]?.let { value ->
+-            runCatching { ExperienceMode.valueOf(value) }.getOrNull()
+-        }
+-    }
++    // Forbidden Vid: always the Essential experience (no choice screen).
++    val mode: Flow<ExperienceMode?> = profileFlow { _ -> ExperienceMode.ESSENTIAL }
+ 
+     val addonSetupSkipped: Flow<Boolean> = profileFlow { prefs ->
+         prefs[addonSetupSkippedKey] ?: false
 diff --git a/app/src/main/java/com/nuvio/tv/data/local/ProfileDataStore.kt b/app/src/main/java/com/nuvio/tv/data/local/ProfileDataStore.kt
 index 1d0da5b7e..d82e26a76 100644
 --- a/app/src/main/java/com/nuvio/tv/data/local/ProfileDataStore.kt
@@ -1273,6 +1362,30 @@ index 6f135af78..7ed785d10 100644
          val DEFAULT_LIBRARY_SOURCE_MODE = LibrarySourceMode.TRAKT
          val DEFAULT_MORE_LIKE_THIS_SOURCE = MoreLikeThisSourcePreference.TRAKT
          const val MIN_CONTINUE_WATCHING_DAYS_CAP = 7
+diff --git a/app/src/main/java/com/nuvio/tv/data/mapper/AddonMapper.kt b/app/src/main/java/com/nuvio/tv/data/mapper/AddonMapper.kt
+index 341d41995..2e3204ea4 100644
+--- a/app/src/main/java/com/nuvio/tv/data/mapper/AddonMapper.kt
++++ b/app/src/main/java/com/nuvio/tv/data/mapper/AddonMapper.kt
+@@ -16,7 +16,7 @@ fun AddonManifestDto.toDomain(baseUrl: String): Addon {
+     val manifestTypes = types.map { it.trim() }.filter { it.isNotEmpty() }
+     return Addon(
+         id = id,
+-        name = name,
++        name = forbiddenVidAddonName(name),
+         version = version,
+         description = description,
+         logo = logo,
+@@ -138,3 +138,10 @@ private fun StremioAddonsConfigDto.toDomain(): StremioAddonsConfig {
+         signature = signature?.takeIf { it.isNotBlank() }
+     )
+ }
++
++/** Forbidden Vid: show Nuvio's own addons under the Forbidden Vid name. */
++internal fun forbiddenVidAddonName(name: String): String {
++    val trimmed = name.trim()
++    if (Regex("(?i)^nuvio\\s*catalog(\\s*add-?on)?$").matches(trimmed)) return "Forbidden Vid Catalog"
++    return trimmed.replace(Regex("(?i)nuvio\\s*tv|nuvio"), "Forbidden Vid")
++}
 diff --git a/app/src/main/java/com/nuvio/tv/data/remote/api/TmdbApi.kt b/app/src/main/java/com/nuvio/tv/data/remote/api/TmdbApi.kt
 index 2248fd9f9..756f904d3 100644
 --- a/app/src/main/java/com/nuvio/tv/data/remote/api/TmdbApi.kt
@@ -2525,7 +2638,7 @@ index 000000000..fcfb0f39d
 +    }
 +}
 diff --git a/app/src/main/java/com/nuvio/tv/ui/screens/profile/ProfileSelectionScreen.kt b/app/src/main/java/com/nuvio/tv/ui/screens/profile/ProfileSelectionScreen.kt
-index 5993b786e..d9a06492a 100644
+index 5993b786e..ae1d0b4b3 100644
 --- a/app/src/main/java/com/nuvio/tv/ui/screens/profile/ProfileSelectionScreen.kt
 +++ b/app/src/main/java/com/nuvio/tv/ui/screens/profile/ProfileSelectionScreen.kt
 @@ -81,6 +81,7 @@ import androidx.compose.ui.focus.FocusRequester
@@ -2572,7 +2685,17 @@ index 5993b786e..d9a06492a 100644
              )
          }
  
-@@ -862,29 +867,11 @@ private fun ProfileSelectionBackground(
+@@ -667,7 +672,8 @@ fun ProfileSelectionScreen(
+                     Text(stringResource(R.string.profile_edit_label))
+                 }
+ 
+-                if (profiles.size > 1) {
++                // Forbidden Vid: every profile already uses the primary profile's settings and keys.
++                if (false) {
+                     Button(
+                         onClick = {
+                             longPressedProfile = null
+@@ -862,29 +868,11 @@ private fun ProfileSelectionBackground(
                  modifier = Modifier.fillMaxSize()
              )
              null -> {
@@ -2604,7 +2727,7 @@ index 5993b786e..d9a06492a 100644
                  )
              }
          }
-@@ -1411,12 +1398,14 @@ private fun CreateProfileOverlay(
+@@ -1411,12 +1399,14 @@ private fun CreateProfileOverlay(
          colorHex: String,
          avatarId: String?,
          copyFromProfileId: Int?,
@@ -2620,7 +2743,7 @@ index 5993b786e..d9a06492a 100644
      var selectedColorHex by remember { mutableStateOf("#1E88E5") }
      var selectedAvatarId by remember { mutableStateOf<String?>(null) }
      var focusedAvatarName by remember { mutableStateOf<String?>(null) }
-@@ -1495,8 +1484,9 @@ private fun CreateProfileOverlay(
+@@ -1495,8 +1485,9 @@ private fun CreateProfileOverlay(
                                  profileName,
                                  selectedColorHex,
                                  selectedAvatarId,
@@ -2632,7 +2755,7 @@ index 5993b786e..d9a06492a 100644
                              )
                          }
                      )
-@@ -1549,21 +1539,22 @@ private fun CreateProfileOverlay(
+@@ -1549,21 +1540,22 @@ private fun CreateProfileOverlay(
                          focusRequester = nameFocusRequester
                      )
  
@@ -2666,7 +2789,7 @@ index 5993b786e..d9a06492a 100644
  
                  }
  
-@@ -1737,7 +1728,9 @@ private fun EditProfileOverlay(
+@@ -1737,7 +1729,9 @@ private fun EditProfileOverlay(
      isSaving: Boolean,
      avatarUrlResolver: (String?) -> String?,
      onDismiss: () -> Unit,
@@ -2677,7 +2800,7 @@ index 5993b786e..d9a06492a 100644
  ) {
      BackHandler(onBack = onDismiss)
  
-@@ -1892,6 +1885,24 @@ private fun EditProfileOverlay(
+@@ -1892,6 +1886,24 @@ private fun EditProfileOverlay(
                          focusRequester = nameFocusRequester
                      )
  
@@ -2702,7 +2825,7 @@ index 5993b786e..d9a06492a 100644
                      OverlayButton(
                          text = stringResource(R.string.profile_cancel),
                          isPrimary = true,
-@@ -2309,10 +2320,11 @@ private fun ProfilePinOverlay(
+@@ -2309,10 +2321,11 @@ private fun ProfilePinOverlay(
                  lineHeight = 24.sp
              )
  
@@ -2718,7 +2841,7 @@ index 5993b786e..d9a06492a 100644
              ) {
                  Spacer(modifier = Modifier.height(10.dp))
                  Text(
-@@ -2328,12 +2340,7 @@ private fun ProfilePinOverlay(
+@@ -2328,12 +2341,7 @@ private fun ProfilePinOverlay(
  
              Spacer(modifier = Modifier.height(backHintGap))
  
@@ -2732,7 +2855,7 @@ index 5993b786e..d9a06492a 100644
  
              Spacer(modifier = Modifier.height(contentBottomPadding))
          }
-@@ -2645,3 +2652,7 @@ private fun OverlayButton(
+@@ -2645,3 +2653,7 @@ private fun OverlayButton(
          )
      }
  }
@@ -2741,7 +2864,7 @@ index 5993b786e..d9a06492a 100644
 +private fun nextKidsTier(current: com.nuvio.tv.core.kids.KidsTier?): com.nuvio.tv.core.kids.KidsTier? =
 +    if (current == null) com.nuvio.tv.core.kids.KidsTier.entries.first() else current.next()
 diff --git a/app/src/main/java/com/nuvio/tv/ui/screens/profile/ProfileSelectionViewModel.kt b/app/src/main/java/com/nuvio/tv/ui/screens/profile/ProfileSelectionViewModel.kt
-index ebee289f3..18595f9b5 100644
+index ebee289f3..9b1d20744 100644
 --- a/app/src/main/java/com/nuvio/tv/ui/screens/profile/ProfileSelectionViewModel.kt
 +++ b/app/src/main/java/com/nuvio/tv/ui/screens/profile/ProfileSelectionViewModel.kt
 @@ -51,7 +51,8 @@ class ProfileSelectionViewModel @Inject constructor(
@@ -2754,7 +2877,7 @@ index ebee289f3..18595f9b5 100644
  ) : ViewModel() {
      val activeProfileId: StateFlow<Int> = profileManager.activeProfileId
      val profiles: StateFlow<List<UserProfile>> = profileManager.profiles
-@@ -164,11 +165,40 @@ class ProfileSelectionViewModel @Inject constructor(
+@@ -164,11 +165,38 @@ class ProfileSelectionViewModel @Inject constructor(
      var isSelectingProfile = false
          private set
  
@@ -2765,7 +2888,6 @@ index ebee289f3..18595f9b5 100644
 +    fun setKidsProfile(profileId: Int, tier: com.nuvio.tv.core.kids.KidsTier?) {
 +        viewModelScope.launch {
 +            kidsProfileStore.setTier(profileId, tier)
-+            if (tier != null) profileManager.clearProfileCredentials(profileId)
 +        }
 +    }
 +
@@ -2778,12 +2900,11 @@ index ebee289f3..18595f9b5 100644
 +                profileSettingsSyncService.copyProfileSetup(
 +                    sourceProfileId = 1,
 +                    targetProfileId = targetProfileId,
-+                    // Kids profiles get the primary's addons and settings, but not its linked accounts.
-+                    copyProviderCredentials = !isKids
++                    // Every profile (kids too) uses the primary profile's settings and API keys.
++                    copyProviderCredentials = true
 +                )
 +            }
 +        }.onFailure { Log.w("ProfileSelectionVM", "Couldn't mirror primary settings", it) }
-+        if (isKids) profileManager.clearProfileCredentials(targetProfileId)
 +    }
 +
      fun selectProfile(id: Int, onComplete: () -> Unit, onFailure: () -> Unit) {
@@ -2795,7 +2916,7 @@ index ebee289f3..18595f9b5 100644
                  profileManager.setActiveProfile(id)
                  onComplete()
              } catch (error: CancellationException) {
-@@ -188,26 +218,32 @@ class ProfileSelectionViewModel @Inject constructor(
+@@ -188,26 +216,31 @@ class ProfileSelectionViewModel @Inject constructor(
          avatarId: String? = null,
          copyFromProfileId: Int? = null,
          copyProviderCredentials: Boolean = false,
@@ -2829,9 +2950,8 @@ index ebee289f3..18595f9b5 100644
 +                    val copyResult = profileSettingsSyncService.copyProfileSetup(
 +                        sourceProfileId = 1,
 +                        targetProfileId = profile.id,
-+                        copyProviderCredentials = !isKids
++                        copyProviderCredentials = true
 +                    )
-+                    if (isKids) profileManager.clearProfileCredentials(profile.id)
                      refreshProfilePinStates()
                      CreateProfileResult.Created(profile, copyResult)
                  } else {
@@ -3032,15 +3152,16 @@ index 78935e68b..8ca34a894 100644
              )
              if (newProfile != null) {
 diff --git a/app/src/main/java/com/nuvio/tv/ui/screens/settings/SettingsCatalog.kt b/app/src/main/java/com/nuvio/tv/ui/screens/settings/SettingsCatalog.kt
-index e7df43304..448eb97d9 100644
+index e7df43304..d8a4f4815 100644
 --- a/app/src/main/java/com/nuvio/tv/ui/screens/settings/SettingsCatalog.kt
 +++ b/app/src/main/java/com/nuvio/tv/ui/screens/settings/SettingsCatalog.kt
 @@ -31,12 +31,13 @@ internal fun visibleSettingsCategories(
      isWatchPartyAvailable: Boolean = false
  ): List<SettingsCategory> = SettingsCategory.entries.filter { category ->
      when (category) {
+-        SettingsCategory.ACCOUNT,
 +        // Forbidden Vid: only Account and Profiles are offered, and only on the primary profile.
-         SettingsCategory.ACCOUNT,
++        // Forbidden Vid: no Account section (sign-in happens when the app first opens).
          SettingsCategory.PROFILES -> isPrimaryProfile
 -        SettingsCategory.WATCH_PARTY -> isWatchPartyAvailable
 +        // Shown as "Updates" (check for a newer Forbidden Vid build).
