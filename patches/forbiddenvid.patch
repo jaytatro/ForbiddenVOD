@@ -1942,7 +1942,7 @@ index afd1561c5..2d734a752 100644
      init {
          observeAuthState()
 diff --git a/app/src/main/java/com/nuvio/tv/ui/screens/account/AuthQrSignInScreen.kt b/app/src/main/java/com/nuvio/tv/ui/screens/account/AuthQrSignInScreen.kt
-index 80512ff00..323d2d1d6 100644
+index 80512ff00..b2140d1cb 100644
 --- a/app/src/main/java/com/nuvio/tv/ui/screens/account/AuthQrSignInScreen.kt
 +++ b/app/src/main/java/com/nuvio/tv/ui/screens/account/AuthQrSignInScreen.kt
 @@ -27,6 +27,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
@@ -1981,7 +1981,26 @@ index 80512ff00..323d2d1d6 100644
          Text(
              text = stringResource(R.string.auth_qr_tagline),
              modifier = Modifier.widthIn(max = 440.dp),
-@@ -833,20 +836,22 @@ private fun Modifier.authGradientBackground(): Modifier = drawWithCache {
+@@ -404,7 +407,8 @@ private fun AuthQrLoginPane(
+                     )
+                 }
+             }
+-            Button(
++            // Forbidden Vid: no "Continue without account" / Back button on the sign-in screen.
++            if (isSignedIn) Button(
+                 onClick = onBackOrContinue,
+                 modifier = if (!focusEmail && !focusMainAction) {
+                     Modifier.focusRequester(initialFocusRequester)
+@@ -673,6 +677,8 @@ private fun displayVerificationUri(value: String): String = value
+ 
+ @Composable
+ private fun AuthTermsAcknowledgement() {
++    // Forbidden Vid: no terms line under the sign-in button.
++    if (true) return
+     val context = LocalContext.current
+     Row(
+         modifier = Modifier.fillMaxWidth(),
+@@ -833,20 +839,22 @@ private fun Modifier.authGradientBackground(): Modifier = drawWithCache {
      )
      val brush = Brush.linearGradient(
          colorStops = arrayOf(
