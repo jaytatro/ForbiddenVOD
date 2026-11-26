@@ -762,10 +762,10 @@ index 000000000..bdb20890c
 +}
 diff --git a/app/src/main/java/com/nuvio/tv/core/kids/KidsCatalogService.kt b/app/src/main/java/com/nuvio/tv/core/kids/KidsCatalogService.kt
 new file mode 100644
-index 000000000..e35f31710
+index 000000000..450de28d1
 --- /dev/null
 +++ b/app/src/main/java/com/nuvio/tv/core/kids/KidsCatalogService.kt
-@@ -0,0 +1,219 @@
+@@ -0,0 +1,250 @@
 +package com.nuvio.tv.core.kids
 +
 +import android.content.Context
@@ -839,6 +839,37 @@ index 000000000..e35f31710
 +        }
 +        store(cacheKey, logo.orEmpty())
 +        return logo
++    }
++
++    data class AiredEpisode(val season: Int, val episode: Int, val airedAt: Long)
++    private val latestEpisodes = ConcurrentHashMap<String, Pair<Long, AiredEpisode?>>()
++
++    /** Newest aired episode of a show (cached for a few hours). */
++    suspend fun latestAiredEpisode(contentId: String): AiredEpisode? {
++        val key = BuildConfig.TMDB_API_KEY.takeIf { it.isNotBlank() } ?: return null
++        val now = System.currentTimeMillis()
++        latestEpisodes[contentId]?.let { (at, value) -> if (now - at < 6 * 60 * 60 * 1000L) return value }
++        val result = try {
++            val tmdbId = tmdbIds["series:$contentId"]
++                ?: contentId.removePrefix("tmdb:").substringBefore(':').toIntOrNull()?.takeIf { contentId.startsWith("tmdb:") }
++                ?: contentId.substringBefore(':').takeIf { it.startsWith("tt") }?.let { imdb ->
++                    tmdbApi.findByExternalId(imdb, key).body()?.tvResults?.firstOrNull()?.id
++                }
++                ?: return null
++            val last = tmdbApi.getTvLastEpisodeFv(tmdbId, key).body()?.lastEpisodeToAir
++            val season = last?.seasonNumber
++            val episode = last?.episodeNumber
++            val aired = last?.airDate?.let {
++                runCatching { java.time.LocalDate.parse(it).atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli() }.getOrNull()
++            }
++            if (season != null && episode != null && aired != null) AiredEpisode(season, episode, aired) else null
++        } catch (e: CancellationException) {
++            throw e
++        } catch (e: Exception) {
++            return null
++        }
++        latestEpisodes[contentId] = now to result
++        return result
 +    }
 +
 +    private fun today(): String = java.time.LocalDate.now().toString()
@@ -1469,10 +1500,10 @@ index 341d41995..2e3204ea4 100644
 +    return trimmed.replace(Regex("(?i)nuvio\\s*tv|nuvio"), "Forbidden Vid")
 +}
 diff --git a/app/src/main/java/com/nuvio/tv/data/remote/api/TmdbApi.kt b/app/src/main/java/com/nuvio/tv/data/remote/api/TmdbApi.kt
-index 2248fd9f9..756f904d3 100644
+index 2248fd9f9..5b36c2561 100644
 --- a/app/src/main/java/com/nuvio/tv/data/remote/api/TmdbApi.kt
 +++ b/app/src/main/java/com/nuvio/tv/data/remote/api/TmdbApi.kt
-@@ -160,6 +160,50 @@ interface TmdbApi {
+@@ -160,6 +160,57 @@ interface TmdbApi {
          @Query("api_key") apiKey: String
      ): Response<TmdbNetworkDetailsResponse>
  
@@ -1491,6 +1522,13 @@ index 2248fd9f9..756f904d3 100644
 +        @Query("language") language: String = "en-US",
 +        @Query("page") page: Int = 1
 +    ): Response<TmdbDiscoverResponse>
++
++    /** Forbidden Vid: newest aired episode of a show, used to spot new episodes on kids profiles. */
++    @GET("tv/{tv_id}")
++    suspend fun getTvLastEpisodeFv(
++        @Path("tv_id") tvId: Int,
++        @Query("api_key") apiKey: String
++    ): Response<FvTvLastEpisodeResponse>
 +
 +    /** Forbidden Vid: keywords, used to keep horror off kids profiles. */
 +    @GET("movie/{movie_id}/keywords")
@@ -1523,7 +1561,7 @@ index 2248fd9f9..756f904d3 100644
      @GET("discover/movie")
      suspend fun discoverMovies(
          @Query("api_key") apiKey: String,
-@@ -609,6 +653,7 @@ data class TmdbKeywordSearchResult(
+@@ -609,6 +660,7 @@ data class TmdbKeywordSearchResult(
  @JsonClass(generateAdapter = true)
  data class TmdbDiscoverResult(
      @Json(name = "id") val id: Int,
@@ -1531,7 +1569,7 @@ index 2248fd9f9..756f904d3 100644
      @Json(name = "title") val title: String? = null,
      @Json(name = "name") val name: String? = null,
      @Json(name = "original_title") val originalTitle: String? = null,
-@@ -753,3 +798,15 @@ data class TmdbNetworkDetailsResponse(
+@@ -753,3 +805,27 @@ data class TmdbNetworkDetailsResponse(
      @Json(name = "logo_path") val logoPath: String? = null,
      @Json(name = "origin_country") val originCountry: String? = null
  )
@@ -1546,6 +1584,18 @@ index 2248fd9f9..756f904d3 100644
 +data class FvKeyword(
 +    @Json(name = "id") val id: Int? = null,
 +    @Json(name = "name") val name: String? = null
++)
++
++@JsonClass(generateAdapter = true)
++data class FvTvLastEpisodeResponse(
++    @Json(name = "last_episode_to_air") val lastEpisodeToAir: FvTvEpisode? = null
++)
++
++@JsonClass(generateAdapter = true)
++data class FvTvEpisode(
++    @Json(name = "air_date") val airDate: String? = null,
++    @Json(name = "season_number") val seasonNumber: Int? = null,
++    @Json(name = "episode_number") val episodeNumber: Int? = null
 +)
 diff --git a/app/src/main/java/com/nuvio/tv/data/repository/CatalogRepositoryImpl.kt b/app/src/main/java/com/nuvio/tv/data/repository/CatalogRepositoryImpl.kt
 index 8490d68e4..554427149 100644
@@ -2600,10 +2650,10 @@ index 000000000..bdc895aa5
 +}
 diff --git a/app/src/main/java/com/nuvio/tv/ui/screens/kids/KidsViewModel.kt b/app/src/main/java/com/nuvio/tv/ui/screens/kids/KidsViewModel.kt
 new file mode 100644
-index 000000000..9892522ea
+index 000000000..1252bf463
 --- /dev/null
 +++ b/app/src/main/java/com/nuvio/tv/ui/screens/kids/KidsViewModel.kt
-@@ -0,0 +1,220 @@
+@@ -0,0 +1,243 @@
 +package com.nuvio.tv.ui.screens.kids
 +
 +import androidx.lifecycle.ViewModel
@@ -2671,7 +2721,30 @@ index 000000000..9892522ea
 +                        .sortedByDescending { it.lastWatched }
 +                        .distinctBy { it.contentId }
 +                    _continueMovies.value = movies.filterAllowed("movie").map { it.toKidsPreview(isSeries = false) }
-+                    _continueSeries.value = shows.filterAllowed("series").map { it.toKidsPreview(isSeries = true) }
++                    val allowedShows = shows.filterAllowed("series")
++                    _continueSeries.value = allowedShows.map { it.toKidsPreview(isSeries = true) }
++                    // A show with a newly released episode moves to the front.
++                    val fresh = kotlinx.coroutines.coroutineScope {
++                        allowedShows.map { progress ->
++                            async {
++                                val latest = runCatching { service.latestAiredEpisode(progress.contentId) }.getOrNull()
++                                    ?: return@async null
++                                val watchedSeason = progress.season ?: 0
++                                val watchedEpisode = progress.episode ?: 0
++                                val isNewer = latest.season > watchedSeason ||
++                                    (latest.season == watchedSeason && latest.episode > watchedEpisode)
++                                val cameOutSinceWatched = latest.airedAt + 24 * 60 * 60 * 1000L > progress.lastWatched &&
++                                    latest.airedAt <= System.currentTimeMillis()
++                                if (isNewer && cameOutSinceWatched) progress.contentId to latest.airedAt else null
++                            }
++                        }.awaitAll().filterNotNull().toMap()
++                    }
++                    if (fresh.isNotEmpty()) {
++                        val (newOnes, others) = allowedShows.partition { it.contentId in fresh }
++                        _continueSeries.value =
++                            newOnes.sortedByDescending { fresh[it.contentId] }.map { it.toKidsPreview(isSeries = true).copy(releaseInfo = "New episode") } +
++                                others.map { it.toKidsPreview(isSeries = true) }
++                    }
 +                }
 +        }
 +    }
