@@ -287,7 +287,7 @@ index 52b648362..728bc191a 100644
 +    }
 +}
 diff --git a/app/src/main/java/com/nuvio/tv/MainActivity.kt b/app/src/main/java/com/nuvio/tv/MainActivity.kt
-index 349a4f389..20b0419f2 100644
+index 349a4f389..bd06b4644 100644
 --- a/app/src/main/java/com/nuvio/tv/MainActivity.kt
 +++ b/app/src/main/java/com/nuvio/tv/MainActivity.kt
 @@ -51,6 +51,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
@@ -307,31 +307,100 @@ index 349a4f389..20b0419f2 100644
  import androidx.compose.ui.draw.clip
  import androidx.compose.ui.draw.drawWithCache
  import androidx.compose.ui.focus.FocusDirection
-@@ -439,6 +442,23 @@ open class MainActivity : ComponentActivity() {
+@@ -213,6 +216,8 @@ import dev.chrisbanes.haze.hazeSource
+ import java.util.Locale
+ import javax.inject.Inject
+ import kotlinx.coroutines.delay
++import kotlinx.coroutines.flow.first
++import com.nuvio.tv.ui.components.fvSmoothBackground
+ import kotlinx.coroutines.flow.MutableStateFlow
+ import kotlinx.coroutines.flow.combine
+ import kotlinx.coroutines.flow.map
+@@ -298,6 +303,9 @@ open class MainActivity : ComponentActivity() {
+     @Inject
+     lateinit var profileManager: ProfileManager
+ 
++    @Inject
++    lateinit var profileLockStateDataStore: com.nuvio.tv.data.local.ProfileLockStateDataStore
++
+     @Inject
+     lateinit var authManager: AuthManager
+ 
+@@ -449,14 +457,28 @@ open class MainActivity : ComponentActivity() {
+                 profiles.firstOrNull { it.id == activeProfileId }
+             }
+             var profilePinStates by remember { mutableStateOf<Map<Int, Boolean>>(emptyMap()) }
++            // Forbidden Vid: don't pick a profile automatically until we know which profiles have a PIN.
++            var pinStatesLoaded by remember { mutableStateOf(false) }
+ 
+             LaunchedEffect(authState, profiles) {
+                 if (authState is AuthState.FullAccount) {
+-                    profileSyncService.pullProfileLockStates()
+-                        .onSuccess { profilePinStates = it }
+-                        .onFailure { profilePinStates = emptyMap() }
+-                } else {
++                    var loaded: Map<Int, Boolean>? = null
++                    for (attempt in 0 until 3) {
++                        loaded = profileSyncService.pullProfileLockStates().getOrNull()
++                        if (loaded != null) break
++                        delay(1_000)
++                    }
++                    if (loaded != null) {
++                        profileLockStateDataStore.replaceAll(loaded)
++                        profilePinStates = loaded
++                    } else {
++                        // Offline: use the PINs we knew about last time, so a locked profile stays locked.
++                        profilePinStates = runCatching { profileLockStateDataStore.pinEnabled.first() }.getOrDefault(emptyMap())
++                    }
++                    pinStatesLoaded = true
++                } else if (authState !is AuthState.Loading) {
+                     profilePinStates = emptyMap()
++                    pinStatesLoaded = false
                  }
              }
  
-+            // Forbidden Vid: as soon as the sign-in finishes, pull the account's profiles and go straight into the app.
+@@ -465,7 +487,39 @@ open class MainActivity : ComponentActivity() {
+             }
+ 
+             var profileSwitchedManually by remember { mutableStateOf(false) }
+-            val shouldAutoSelectProfile = rememberLastProfileEnabled &&
++
++            // Forbidden Vid: right after signing in, pull the account's profiles and PINs, then show
++            // "Who's watching?" (a PIN-locked profile, including the primary, still asks for its PIN).
 +            var wasSignedOut by remember { mutableStateOf(false) }
++            var postLoginSyncInProgress by remember { mutableStateOf(false) }
 +            LaunchedEffect(authState) {
 +                when (authState) {
 +                    is AuthState.FullAccount -> if (wasSignedOut) {
 +                        wasSignedOut = false
++                        postLoginSyncInProgress = true
++                        hasSelectedProfileThisSession = false
++                        profileSwitchedManually = true
++                        splashTriggered = false
 +                        for (attempt in 0 until 3) {
 +                            if (profileSyncService.pullFromRemote().isSuccess) break
 +                            if (attempt < 2) delay(1_000)
 +                        }
++                        // Make sure we know which profiles have a PIN before showing them.
++                        profileSyncService.pullProfileLockStates().getOrNull()?.let { states ->
++                            profileLockStateDataStore.replaceAll(states)
++                            profilePinStates = states
++                        }
++                        pinStatesLoaded = true
 +                        startupSyncService.requestSyncNow()
++                        postLoginSyncInProgress = false
 +                    }
 +                    is AuthState.Loading -> Unit
 +                    else -> wasSignedOut = true
 +                }
 +            }
 +
-             val activeProfileId by profileManager.activeProfileId.collectAsState()
-             val startupSplashEnabled by profileManager.startupSplashEnabled.collectAsState()
-             val startupLoadingState = remember(activeProfileId, startupSession) { StartupLoadingState() }
-@@ -745,9 +765,8 @@ open class MainActivity : ComponentActivity() {
++            val shouldAutoSelectProfile = pinStatesLoaded && !postLoginSyncInProgress &&
++                rememberLastProfileEnabled &&
+                 hasEverSelectedProfile && !activeProfileHasPin &&
+                 !hasSelectedProfileThisSession && !profileSwitchedManually
+             if (shouldAutoSelectProfile && !splashTriggered) {
+@@ -745,9 +799,8 @@ open class MainActivity : ComponentActivity() {
                      if (!surfaceContentReady) {
                          // Still loading auth state; nothing to show yet.
                      } else if (
@@ -343,7 +412,20 @@ index 349a4f389..20b0419f2 100644
                      ) {
                          startupDestination = StartupDestination.Setup
                          AuthQrSignInScreen(
-@@ -823,16 +842,15 @@ open class MainActivity : ComponentActivity() {
+@@ -793,7 +846,11 @@ open class MainActivity : ComponentActivity() {
+                     val shouldShowProfileSelection =
+                         !hasSelectedProfileThisSession && (profiles.size > 1 || activeProfileHasPin)
+ 
+-                    if (shouldShowProfileSelection) {
++                    if (postLoginSyncInProgress || (!hasSelectedProfileThisSession && !pinStatesLoaded)) {
++                        // Forbidden Vid: loading the account's profiles and PINs - nothing to show yet.
++                        startupDestination = StartupDestination.Loading
++                        Box(modifier = Modifier.fillMaxSize().fvSmoothBackground())
++                    } else if (shouldShowProfileSelection) {
+                         startupDestination = if (splashTriggered) StartupDestination.Loading else StartupDestination.ProfileSelection
+                         ProfileSelectionScreen(
+                             onProfileClicked = {
+@@ -823,16 +880,15 @@ open class MainActivity : ComponentActivity() {
                          )
                      } else {
  
@@ -364,7 +446,7 @@ index 349a4f389..20b0419f2 100644
                      val pendingDeepLink by pendingDeepLinkUrl.collectAsState()
  
                      LaunchedEffect(pendingDeepLink) {
-@@ -1055,6 +1073,8 @@ open class MainActivity : ComponentActivity() {
+@@ -1055,6 +1111,8 @@ open class MainActivity : ComponentActivity() {
                              add(Screen.Search.route)
                              add(Screen.Library.route)
                              add(Screen.Settings.route)
@@ -373,7 +455,7 @@ index 349a4f389..20b0419f2 100644
                              if (discoverLocation == DiscoverLocation.IN_SIDEBAR) {
                                  add(Screen.Discover.route)
                              }
-@@ -1062,56 +1082,28 @@ open class MainActivity : ComponentActivity() {
+@@ -1062,56 +1120,28 @@ open class MainActivity : ComponentActivity() {
                      }
  
                      val strNavHome = stringResource(R.string.nav_home)
@@ -443,7 +525,7 @@ index 349a4f389..20b0419f2 100644
                          }
                      }
                      val selectedDrawerRoute = drawerItems.firstOrNull { item ->
-@@ -1147,11 +1139,12 @@ open class MainActivity : ComponentActivity() {
+@@ -1147,11 +1177,12 @@ open class MainActivity : ComponentActivity() {
                          showBanner = updateState.showBanner && currentRoute?.startsWith("player/") != true
                      )
  
@@ -458,7 +540,7 @@ index 349a4f389..20b0419f2 100644
                          onDismissUnknownSources = updateViewModel::dismissUnknownSourcesDialog,
                          onOpenUnknownSources = updateViewModel::openUnknownSourcesSettings,
                          onFeedbackShown = updateViewModel::consumeFeedbackMessage
-@@ -1166,7 +1159,38 @@ open class MainActivity : ComponentActivity() {
+@@ -1166,7 +1197,38 @@ open class MainActivity : ComponentActivity() {
                              focusedSplashTheme = null
                              hasSelectedProfileThisSession = false
                          }
@@ -498,7 +580,7 @@ index 349a4f389..20b0419f2 100644
                              CompositionLocalProvider(LocalNavViewModelStoreOwner provides navViewModelStoreOwner) {
                                  if (modernSidebarEnabled) {
                                      ModernSidebarScaffold(
-@@ -1541,13 +1565,21 @@ private fun LegacySidebarScaffold(
+@@ -1541,13 +1603,21 @@ private fun LegacySidebarScaffold(
                      )
  
                      if (isExpanded) {
@@ -521,7 +603,7 @@ index 349a4f389..20b0419f2 100644
                                  var isProfileFocused by remember { mutableStateOf(false) }
                                  val profileItemShape = NuvioTheme.shapes.navItem
                                  val profileLeadingInset = NuvioTheme.spacing.lg + NuvioTheme.spacing.xxs
-@@ -1592,13 +1624,6 @@ private fun LegacySidebarScaffold(
+@@ -1592,13 +1662,6 @@ private fun LegacySidebarScaffold(
                                          )
                                      }
                                  }
