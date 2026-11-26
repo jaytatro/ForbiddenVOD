@@ -622,10 +622,10 @@ index 000000000..bdb20890c
 +}
 diff --git a/app/src/main/java/com/nuvio/tv/core/kids/KidsCatalogService.kt b/app/src/main/java/com/nuvio/tv/core/kids/KidsCatalogService.kt
 new file mode 100644
-index 000000000..401a75087
+index 000000000..e35f31710
 --- /dev/null
 +++ b/app/src/main/java/com/nuvio/tv/core/kids/KidsCatalogService.kt
-@@ -0,0 +1,185 @@
+@@ -0,0 +1,219 @@
 +package com.nuvio.tv.core.kids
 +
 +import android.content.Context
@@ -665,7 +665,40 @@ index 000000000..401a75087
 +
 +    companion object {
 +        private const val HORROR_GENRE = 27
++        private val GENRE_NAMES = mapOf(
++            28 to "Action", 12 to "Adventure", 16 to "Animation", 35 to "Comedy", 80 to "Crime",
++            99 to "Documentary", 18 to "Drama", 10751 to "Family", 14 to "Fantasy", 36 to "History",
++            10402 to "Music", 9648 to "Mystery", 10749 to "Romance", 878 to "Science Fiction",
++            10770 to "TV Movie", 53 to "Thriller", 10752 to "War", 37 to "Western",
++            10759 to "Action & Adventure", 10762 to "Kids", 10763 to "News", 10764 to "Reality",
++            10765 to "Sci-Fi & Fantasy", 10766 to "Soap", 10767 to "Talk", 10768 to "War & Politics"
++        )
 +        private val HORROR_WORDS = listOf("horror", "slasher", "zombie", "gore", "haunting", "demon", "possession")
++    }
++
++    private val tmdbIds = ConcurrentHashMap<String, Int>()
++
++    /** Title logo (the artwork with the movie's name) for the big panel at the top of kids Home. */
++    suspend fun logoFor(item: MetaPreview): String? {
++        val key = BuildConfig.TMDB_API_KEY.takeIf { it.isNotBlank() } ?: return null
++        val isTv = item.rawType == "series" || item.rawType == "tv"
++        val tmdbId = tmdbIds["${item.rawType}:${item.id}"]
++            ?: item.id.removePrefix("tmdb:").toIntOrNull()
++            ?: return null
++        val cacheKey = (if (isTv) "tvl:" else "mvl:") + tmdbId
++        cached(cacheKey)?.let { return it.ifEmpty { null } }
++        val logo = try {
++            val images = if (isTv) tmdbApi.getTvImages(tmdbId, key).body() else tmdbApi.getMovieImages(tmdbId, key).body()
++            val logos = images?.logos.orEmpty().filter { !it.filePath.isNullOrBlank() }
++            (logos.firstOrNull { it.iso6391 == "en" } ?: logos.firstOrNull())?.filePath
++                ?.let { "https://image.tmdb.org/t/p/w500$it" }
++        } catch (e: CancellationException) {
++            throw e
++        } catch (e: Exception) {
++            return null
++        }
++        store(cacheKey, logo.orEmpty())
++        return logo
 +    }
 +
 +    private fun today(): String = java.time.LocalDate.now().toString()
@@ -777,6 +810,7 @@ index 000000000..401a75087
 +        val id = imdb ?: "tmdb:${r.id}"
 +        val rawType = if (isTv) "series" else "movie"
 +        kidsContentFilter.remember(id, rawType, rating)
++        tmdbIds["$rawType:$id"] = r.id
 +        val date = if (isTv) r.firstAirDate else r.releaseDate
 +        return MetaPreview(
 +            id = id,
@@ -792,7 +826,7 @@ index 000000000..401a75087
 +            released = date?.takeIf { it.isNotBlank() },
 +            imdbRating = r.voteAverage?.toFloat(),
 +            voteCount = r.voteCount,
-+            genres = emptyList(),
++            genres = r.genreIds.orEmpty().mapNotNull { GENRE_NAMES[it] },
 +            ageRating = rating,
 +            imdbId = imdb
 +        )
@@ -1904,10 +1938,10 @@ index f2ca5dec4..cf2e1820f 100644
              }
 diff --git a/app/src/main/java/com/nuvio/tv/ui/screens/kids/KidsScreens.kt b/app/src/main/java/com/nuvio/tv/ui/screens/kids/KidsScreens.kt
 new file mode 100644
-index 000000000..2930654a8
+index 000000000..1387e8bca
 --- /dev/null
 +++ b/app/src/main/java/com/nuvio/tv/ui/screens/kids/KidsScreens.kt
-@@ -0,0 +1,342 @@
+@@ -0,0 +1,410 @@
 +@file:OptIn(ExperimentalTvMaterial3Api::class)
 +
 +package com.nuvio.tv.ui.screens.kids
@@ -1919,6 +1953,7 @@ index 000000000..2930654a8
 +import androidx.compose.foundation.layout.PaddingValues
 +import androidx.compose.foundation.layout.Row
 +import androidx.compose.foundation.layout.fillMaxSize
++import androidx.compose.foundation.layout.fillMaxHeight
 +import androidx.compose.foundation.layout.fillMaxWidth
 +import androidx.compose.foundation.layout.height
 +import androidx.compose.foundation.layout.padding
@@ -1999,10 +2034,13 @@ index 000000000..2930654a8
 +    var focused by remember { mutableStateOf<MetaPreview?>(null) }
 +    val heroItem = focused ?: rows.firstOrNull { it.items.isNotEmpty() }?.items?.firstOrNull()
 +
-+    Column(modifier = Modifier.fillMaxSize().background(NuvioTheme.colors.Background)) {
-+        KidsHero(item = heroItem, fallbackTitle = "Kids", modifier = Modifier.fillMaxWidth().weight(0.42f), ratingsLine = tierState?.ratingsLine.orEmpty())
++    // Forbidden Vid: laid out like the main Home screen - artwork top right, title logo and details on the left.
++    Box(modifier = Modifier.fillMaxSize().background(NuvioTheme.colors.Background)) {
++    KidsBackdrop(item = heroItem)
++    Column(modifier = Modifier.fillMaxSize()) {
++        KidsHero(item = heroItem, fallbackTitle = "Kids", viewModel = viewModel, modifier = Modifier.fillMaxWidth().height(262.dp))
 +        LazyColumn(
-+            modifier = Modifier.fillMaxWidth().weight(0.58f),
++            modifier = Modifier.fillMaxWidth().weight(1f),
 +            contentPadding = PaddingValues(top = 4.dp, bottom = 48.dp),
 +            verticalArrangement = Arrangement.spacedBy(18.dp)
 +        ) {
@@ -2045,68 +2083,132 @@ index 000000000..2930654a8
 +            }
 +        }
 +    }
++    }
 +}
 +
-+/** Top panel with the highlighted title's artwork and information, like the main Home screen. */
++/** Artwork in the top-right corner that fades into the background, like the main Home screen. */
 +@Composable
-+private fun KidsHero(item: MetaPreview?, fallbackTitle: String, modifier: Modifier = Modifier, ratingsLine: String = "") {
-+    Box(modifier = modifier) {
-+        val art = item?.background ?: item?.poster
-+        if (art != null) {
-+            coil3.compose.AsyncImage(
-+                model = art,
-+                contentDescription = null,
-+                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
-+                modifier = Modifier.fillMaxSize()
-+            )
-+        }
-+        Box(
-+            Modifier.fillMaxSize().background(
-+                androidx.compose.ui.graphics.Brush.horizontalGradient(
-+                    listOf(NuvioTheme.colors.Background, NuvioTheme.colors.Background.copy(alpha = 0.75f), androidx.compose.ui.graphics.Color.Transparent)
-+                )
-+            )
-+        )
-+        Box(
-+            Modifier.fillMaxSize().background(
-+                androidx.compose.ui.graphics.Brush.verticalGradient(
-+                    listOf(androidx.compose.ui.graphics.Color.Transparent, NuvioTheme.colors.Background)
-+                )
-+            )
-+        )
-+        // Text starts below the TV's safe area at the top, so nothing is cut off by the screen edge.
-+        Column(
++private fun KidsBackdrop(item: MetaPreview?) {
++    val art = item?.background ?: item?.poster
++    Box(
++        modifier = Modifier
++            .fillMaxWidth()
++            .fillMaxHeight(0.62f)
++    ) {
++        androidx.compose.animation.Crossfade(
++            targetState = art,
++            animationSpec = androidx.compose.animation.core.tween(450),
++            label = "kidsBackdrop",
 +            modifier = Modifier
-+                .align(Alignment.TopStart)
-+                .padding(start = KIDS_START, end = 64.dp, top = 32.dp, bottom = 8.dp)
-+                .fillMaxWidth(0.6f),
-+            verticalArrangement = Arrangement.spacedBy(4.dp)
-+        ) {
-+            Text(text = ratingsLine, style = MaterialTheme.typography.labelMedium, color = NuvioTheme.colors.Secondary)
++                .align(Alignment.TopEnd)
++                .fillMaxWidth(0.66f)
++                .fillMaxHeight()
++        ) { url ->
++            if (url != null) {
++                coil3.compose.AsyncImage(
++                    model = url,
++                    contentDescription = null,
++                    contentScale = androidx.compose.ui.layout.ContentScale.Crop,
++                    alignment = Alignment.TopCenter,
++                    modifier = Modifier.fillMaxSize()
++                )
++            }
++        }
++        // Fade the artwork into the background on the left and at the bottom.
++        Box(
++            Modifier
++                .align(Alignment.TopEnd)
++                .fillMaxWidth(0.66f)
++                .fillMaxHeight()
++                .background(
++                    androidx.compose.ui.graphics.Brush.horizontalGradient(
++                        0f to NuvioTheme.colors.Background,
++                        0.18f to NuvioTheme.colors.Background.copy(alpha = 0.75f),
++                        0.45f to androidx.compose.ui.graphics.Color.Transparent,
++                        1f to androidx.compose.ui.graphics.Color.Transparent
++                    )
++                )
++        )
++        Box(
++            Modifier
++                .fillMaxSize()
++                .background(
++                    androidx.compose.ui.graphics.Brush.verticalGradient(
++                        0f to androidx.compose.ui.graphics.Color.Transparent,
++                        0.6f to androidx.compose.ui.graphics.Color.Transparent,
++                        1f to NuvioTheme.colors.Background
++                    )
++                )
++        )
++    }
++}
++
++/** Title logo (or name), details and description of the highlighted title. */
++@Composable
++private fun KidsHero(
++    item: MetaPreview?,
++    fallbackTitle: String,
++    viewModel: KidsViewModel,
++    modifier: Modifier = Modifier
++) {
++    var logo by remember(item?.id) { mutableStateOf(item?.logo) }
++    LaunchedEffect(item?.id) {
++        if (item != null && logo == null) logo = viewModel.logoFor(item)
++    }
++    Column(
++        modifier = modifier
++            .padding(start = KIDS_START + 12.dp, end = 64.dp, top = 30.dp)
++            .fillMaxWidth(0.48f),
++        verticalArrangement = Arrangement.spacedBy(8.dp)
++    ) {
++        val currentLogo = logo
++        if (currentLogo != null) {
++            coil3.compose.AsyncImage(
++                model = currentLogo,
++                contentDescription = item?.name,
++                contentScale = androidx.compose.ui.layout.ContentScale.Fit,
++                alignment = Alignment.CenterStart,
++                modifier = Modifier
++                    .height(84.dp)
++                    .fillMaxWidth(0.8f)
++            )
++        } else {
 +            Text(
 +                text = item?.name ?: fallbackTitle,
-+                style = MaterialTheme.typography.headlineMedium,
++                style = MaterialTheme.typography.displaySmall,
 +                color = NuvioTheme.colors.TextPrimary,
-+                maxLines = 1,
++                fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
++                maxLines = 2,
 +                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
 +            )
-+            if (item != null) {
-+                val facts = listOfNotNull(
-+                    item.releaseInfo,
-+                    item.ageRating,
-+                    item.imdbRating?.takeIf { it > 0f }?.let { "★ " + String.format(java.util.Locale.US, "%.1f", it) },
-+                    if (item.rawType == "series") "TV Series" else "Movie"
-+                ).joinToString("  ·  ")
-+                Text(text = facts, style = MaterialTheme.typography.bodyMedium, color = NuvioTheme.colors.TextSecondary)
-+                item.description?.let {
-+                    Text(
-+                        text = it,
-+                        style = MaterialTheme.typography.bodyMedium,
-+                        color = NuvioTheme.colors.TextPrimary.copy(alpha = 0.85f),
-+                        maxLines = 2,
-+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
-+                    )
-+                }
++        }
++        if (item != null) {
++            val typeLabel = if (item.rawType == "series") "TV Series" else "Movie"
++            Text(
++                text = listOfNotNull(typeLabel, item.genres.firstOrNull(), item.releaseInfo).joinToString("  •  "),
++                style = MaterialTheme.typography.bodyMedium,
++                color = NuvioTheme.colors.TextPrimary
++            )
++            val second = listOfNotNull(
++                item.ageRating?.takeIf { it.isNotBlank() },
++                item.imdbRating?.takeIf { it > 0f }?.let { "★ " + String.format(java.util.Locale.US, "%.1f", it) }
++            )
++            if (second.isNotEmpty()) {
++                Text(
++                    text = second.joinToString("  •  "),
++                    style = MaterialTheme.typography.bodyMedium,
++                    color = NuvioTheme.colors.TextPrimary,
++                    fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold
++                )
++            }
++            item.description?.let {
++                Text(
++                    text = it,
++                    style = MaterialTheme.typography.bodyMedium,
++                    color = NuvioTheme.colors.TextPrimary.copy(alpha = 0.9f),
++                    maxLines = 4,
++                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
++                )
 +            }
 +        }
 +    }
@@ -2252,10 +2354,10 @@ index 000000000..2930654a8
 +}
 diff --git a/app/src/main/java/com/nuvio/tv/ui/screens/kids/KidsViewModel.kt b/app/src/main/java/com/nuvio/tv/ui/screens/kids/KidsViewModel.kt
 new file mode 100644
-index 000000000..fb553c5c3
+index 000000000..fcfb0f39d
 --- /dev/null
 +++ b/app/src/main/java/com/nuvio/tv/ui/screens/kids/KidsViewModel.kt
-@@ -0,0 +1,164 @@
+@@ -0,0 +1,166 @@
 +package com.nuvio.tv.ui.screens.kids
 +
 +import androidx.lifecycle.ViewModel
@@ -2376,6 +2478,8 @@ index 000000000..fb553c5c3
 +            }
 +        }
 +    }
++
++    suspend fun logoFor(item: MetaPreview): String? = item.logo ?: service.logoFor(item)
 +
 +    fun startBrowse(type: String, genre: Int?, sort: com.nuvio.tv.core.kids.KidsSort = _browse.value.sort) {
 +        if (browseType == type && _browse.value.genre == genre && _browse.value.sort == sort && _browse.value.page > 0) return
